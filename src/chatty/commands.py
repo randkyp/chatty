@@ -137,7 +137,19 @@ def _cmd_system(arg: str, session: ChatSession, cfg: AppConfig) -> CommandResult
 
 def _cmd_ctx(arg: str, session: ChatSession) -> CommandResult:
     if not arg:
-        return CommandResult(message=f"Context size: {session.ctx_size}")
+        budget = session.ctx_size - session.genmax
+        used = session.get_token_count()
+        n_msgs = len(session.messages)
+        pct = (used / budget * 100) if budget > 0 and used >= 0 else 0
+
+        lines = [
+            f"Context window : {session.ctx_size} tokens",
+            f"GenMax reserve : {session.genmax}",
+            f"Usable budget  : {budget}",
+            f"Current usage  : ~{used} tokens ({pct:.0f}%)" if used >= 0 else "Current usage  : (unavailable)",
+            f"Messages       : {n_msgs}",
+        ]
+        return CommandResult(message="\n".join(lines))
     try:
         val = int(arg)
         session.ctx_size = val
