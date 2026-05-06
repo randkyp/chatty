@@ -65,6 +65,7 @@ class AppConfig:
     config_path: Path
     profile: Profile
     debug: bool = False
+    enter_sends: bool = False
     # Stores the raw parsed TOML so we can write back on /save.
     _raw: dict[str, Any] = field(default_factory=dict, repr=False)
 
@@ -135,6 +136,10 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--debug", action="store_true",
         help="Print the JSON payload before each API call.",
     )
+    parser.add_argument(
+        "-e", "--enter-sends", action="store_true",
+        help="Enter sends message (Shift+Enter for newlines).",
+    )
     return parser.parse_args(argv)
 
 
@@ -157,6 +162,7 @@ def load_config(argv: list[str] | None = None) -> AppConfig:
         config_path=config_path,
         profile=profile,
         debug=args.debug,
+        enter_sends=args.enter_sends,
         _raw=raw,
     )
 

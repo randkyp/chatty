@@ -23,8 +23,6 @@ from chatty.ui import (
     print_system,
     print_warning,
     print_welcome,
-    render_assistant_message,
-    render_user_message,
 )
 
 
@@ -61,9 +59,10 @@ def main(argv: list[str] | None = None) -> None:
         cfg.profile.model or "(auto)",
         session.ctx_size,
         session.genmax,
+        enter_sends=cfg.enter_sends,
     )
 
-    prompt_session = create_prompt_session()
+    prompt_session = create_prompt_session(enter_sends=cfg.enter_sends)
 
     while True:
         try:
@@ -95,7 +94,6 @@ def main(argv: list[str] | None = None) -> None:
             text = text[1:]  # strip one leading slash
 
         # ── Send message to API ────────────────────────────────────────
-        render_user_message(text)
         session.add_user_message(text)
 
         payload_messages = session.build_payload_messages()
@@ -147,8 +145,6 @@ def main(argv: list[str] | None = None) -> None:
         full_response = "".join(collected)
         if full_response:
             session.add_assistant_message(full_response)
-            # Show the rendered markdown version.
-            render_assistant_message(full_response)
 
         # Display token usage.
         token_count = session.get_token_count()
