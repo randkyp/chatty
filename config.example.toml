@@ -1,0 +1,47 @@
+# Chatty – example configuration
+# Copy to config.toml and edit to taste:  cp config.example.toml config.toml
+#
+# Each [profile.<name>] section defines a connection profile.
+# Launch with:  chatty -p <name>
+
+[profile.default]
+base_url = "http://localhost:8080"
+# api_key = "sk-..."
+# model = "my-model"
+# system_prompt = "You are a helpful assistant."
+# ctx_size = 8192
+# genmax = 1024
+
+# [profile.default.samplers]
+# temperature = 0.7
+# top_p = 0.9
+# repeat_penalty = 1.1
+
+# ── Example: OpenAI ────────────────────────────────────────────────────────
+
+# [profile.openai]
+# base_url = "https://api.openai.com"
+# api_key = "sk-..."
+# model = "gpt-4o"
+# system_prompt = "You are a helpful assistant."
+# ctx_size = 128000
+# genmax = 4096
+#
+# [profile.openai.samplers]
+# temperature = 0.7
+
+# ── Example: local vLLM / llama.cpp with nested sampler kwargs ─────────────
+
+# [profile.local]
+# base_url = "http://localhost:5000"
+# model = "mistral-7b"
+# ctx_size = 32768
+# genmax = 2048
+#
+# [profile.local.samplers]
+# temperature = 0.8
+# top_k = 40
+# top_p = 0.95
+#
+# [profile.local.samplers.chat_template_kwargs]
+# add_generation_prompt = true
