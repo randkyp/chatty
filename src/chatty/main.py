@@ -7,7 +7,13 @@ API responses with Ctrl+C interrupt support.
 
 from __future__ import annotations
 
+import itertools
+import os
 import sys
+
+from rich.live import Live
+from rich.markdown import Markdown
+from rich.text import Text
 
 from chatty.api import fetch_model_metadata, stream_chat
 from chatty.chat_session import ChatSession, TokenCounter
@@ -21,6 +27,7 @@ from chatty.ui import (
     print_assistant_done,
     print_error,
     print_system,
+    print_user,
     print_warning,
     print_welcome,
 )
@@ -79,6 +86,8 @@ def main(argv: list[str] | None = None) -> None:
         if not text:
             continue
 
+        print_user(text)
+
         # ── Slash command handling ──────────────────────────────────────
         if text.startswith("/") and not text.startswith("//"):
             result = handle_command(text, session, cfg)
@@ -124,22 +133,92 @@ def main(argv: list[str] | None = None) -> None:
 
         # Print a header for the streaming response.
         console.print()
-        console.print("[assistant]Assistant ›[/]", end=" ")
 
+        stream_iter = iter(stream)
         try:
-            for chunk in stream:
-                if chunk.startswith("[error]"):
-                    print_error(chunk)
-                    break
-                print_assistant_chunk(chunk)
-                collected.append(chunk)
+            with Live(
+                Text.from_markup("[assistant]Assistant ›[/] [dim italic]Thinking...[/]"),
+                console=console,
+                transient=True,
+                refresh_per_second=4,
+            ):
+                first_chunk = next(stream_iter)
+            stream_iter = itertools.chain([first_chunk], stream_iter)
+        except StopIteration:
+            stream_iter = iter([])
         except KeyboardInterrupt:
             interrupted = True
-            print_assistant_done()
-            print_warning("Generation interrupted.")
 
-        if not interrupted:
-            print_assistant_done()
+        console.print("[assistant]Assistant ›[/]", end="" if cfg.raw_output else "\n")
+
+        if interrupted:
+            if cfg.raw_output:
+                print_assistant_done()
+            print_warning("Generation interrupted.")
+        else:
+            if cfg.raw_output:
+                # Raw mode: print chunks directly (natural terminal scrolling).
+                try:
+                    for chunk in stream_iter:
+                        if chunk.startswith("[error]"):
+                            print_error(chunk)
+                            break
+                        print_assistant_chunk(chunk)
+                        collected.append(chunk)
+                except KeyboardInterrupt:
+                    interrupted = True
+                    print_assistant_done()
+                    print_warning("Generation interrupted.")
+
+                if not interrupted:
+                    print_assistant_done()
+            else:
+                # Markdown mode: keep a small tail-preview in Live during
+                # streaming, then snap to rendered Markdown on completion.
+                try:
+                    term_h = os.get_terminal_size().lines
+                except OSError:
+                    term_h = 24
+                
+                preview_lines = max(term_h // 2, 6)
+
+                def _tail(text: str) -> Text:
+                    """Return a constant-height, non-wrapping preview."""
+                    lines = text.splitlines()
+                    if len(lines) < preview_lines:
+                        # Pad to ensure constant height and prevent scrolling
+                        lines = lines + [""] * (preview_lines - len(lines))
+                    else:
+                        lines = lines[-preview_lines:]
+                        if lines:
+                            lines[0] = "…"
+                    
+                    # no_wrap=True prevents wrapped lines from increasing height
+                    return Text("\n".join(lines), no_wrap=True, overflow="ellipsis")
+
+                try:
+                    with Live(
+                        _tail(""),
+                        console=console,
+                        refresh_per_second=8,
+                        transient=True,
+                    ) as live:
+                        for chunk in stream_iter:
+                            if chunk.startswith("[error]"):
+                                print_error(chunk)
+                                break
+                            collected.append(chunk)
+                            live.update(_tail("".join(collected)))
+                except KeyboardInterrupt:
+                    interrupted = True
+
+                # Render the full Markdown outside the Live context so it
+                # prints via normal terminal scrolling (no duplication).
+                if collected:
+                    console.print(Markdown("".join(collected)))
+                
+                if interrupted:
+                    print_warning("Generation interrupted.")
 
         # Save response (partial or complete) to history.
         full_response = "".join(collected)

@@ -81,6 +81,7 @@ def create_prompt_session(enter_sends: bool = False) -> PromptSession:
         key_bindings=_build_key_bindings(enter_sends),
         multiline=True,
         prompt_continuation=lambda width, line_number, wrap_count: "… ",
+        erase_when_done=True,
     )
 
 
@@ -96,6 +97,13 @@ def get_user_input(session: PromptSession) -> str | None:
 
 
 # ── Output rendering ──────────────────────────────────────────────────────
+
+def print_user(msg: str) -> None:
+    """Print the user's message cleanly to the scrollback buffer."""
+    from rich.text import Text
+    t = Text("You › ", style="user")
+    t.append(msg)
+    console.print(t)
 
 def print_assistant_chunk(text: str) -> None:
     """Print a raw streaming chunk (no newline, immediate flush)."""
@@ -141,5 +149,5 @@ def print_welcome(
         console.print("[dim]Enter sends. Shift+Enter (Esc→Enter) for newlines.[/]")
     else:
         console.print("[dim]Multiline input. Submit with Meta+Enter (Esc→Enter) or Ctrl+Enter.[/]")
-    console.print("[dim]Type /quit to exit. /clear, /undo, /system, /samplers, /save for more.[/]")
+    console.print("[dim]Type /quit to exit. /clear, /undo, /system, /ctx, /genmax, /profile, /samplers, /save for more.[/]")
     console.print()

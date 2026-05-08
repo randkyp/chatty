@@ -66,6 +66,7 @@ class AppConfig:
     profile: Profile
     debug: bool = False
     enter_sends: bool = False
+    raw_output: bool = False
     # Stores the raw parsed TOML so we can write back on /save.
     _raw: dict[str, Any] = field(default_factory=dict, repr=False)
 
@@ -140,6 +141,10 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "-e", "--enter-sends", action="store_true",
         help="Enter sends message (Shift+Enter for newlines).",
     )
+    parser.add_argument(
+        "-r", "--raw", action="store_true",
+        help="Raw streaming output (no Markdown rendering).",
+    )
     return parser.parse_args(argv)
 
 
@@ -163,6 +168,7 @@ def load_config(argv: list[str] | None = None) -> AppConfig:
         profile=profile,
         debug=args.debug,
         enter_sends=args.enter_sends,
+        raw_output=args.raw,
         _raw=raw,
     )
 
