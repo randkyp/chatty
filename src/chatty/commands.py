@@ -14,7 +14,7 @@ from typing import Any
 from rich.console import Console
 
 from chatty.chat_session import ChatSession
-from chatty.config import AppConfig, Profile, load_profile_by_name, save_profile
+from chatty.config import AppConfig, load_profile_by_name, save_profile
 
 console = Console()
 

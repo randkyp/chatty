@@ -8,7 +8,6 @@ oldest user/assistant pairs until the history fits within ctx_size - genmax.
 
 from __future__ import annotations
 
-import json
 from dataclasses import dataclass, field
 from typing import Any
 

@@ -8,8 +8,7 @@ API responses with Ctrl+C interrupt support.
 from __future__ import annotations
 
 import itertools
-import os
-import sys
+import shutil
 
 from rich.live import Live
 from rich.markdown import Markdown
@@ -133,8 +132,8 @@ def main(argv: list[str] | None = None) -> None:
 
         # Print a header for the streaming response.
         console.print()
-
         stream_iter = iter(stream)
+        
         try:
             with Live(
                 Text.from_markup("[assistant]Assistant ›[/] [dim italic]Thinking...[/]"),
@@ -151,74 +150,44 @@ def main(argv: list[str] | None = None) -> None:
 
         console.print("[assistant]Assistant ›[/]", end="" if cfg.raw_output else "\n")
 
-        if interrupted:
-            if cfg.raw_output:
-                print_assistant_done()
-            print_warning("Generation interrupted.")
-        else:
-            if cfg.raw_output:
-                # Raw mode: print chunks directly (natural terminal scrolling).
-                try:
+        if not interrupted:
+            try:
+                if cfg.raw_output:
                     for chunk in stream_iter:
                         if chunk.startswith("[error]"):
                             print_error(chunk)
                             break
                         print_assistant_chunk(chunk)
                         collected.append(chunk)
-                except KeyboardInterrupt:
-                    interrupted = True
-                    print_assistant_done()
-                    print_warning("Generation interrupted.")
+                else:
+                    term_h = shutil.get_terminal_size((80, 24)).lines
+                    preview_lines = max(term_h // 2, 6)
 
-                if not interrupted:
-                    print_assistant_done()
-            else:
-                # Markdown mode: keep a small tail-preview in Live during
-                # streaming, then snap to rendered Markdown on completion.
-                try:
-                    term_h = os.get_terminal_size().lines
-                except OSError:
-                    term_h = 24
-                
-                preview_lines = max(term_h // 2, 6)
-
-                def _tail(text: str) -> Text:
-                    """Return a constant-height, non-wrapping preview."""
-                    lines = text.splitlines()
-                    if len(lines) < preview_lines:
-                        # Pad to ensure constant height and prevent scrolling
-                        lines = lines + [""] * (preview_lines - len(lines))
-                    else:
-                        lines = lines[-preview_lines:]
-                        if lines:
+                    def _tail(text: str) -> Text:
+                        """Return a constant-height, non-wrapping preview."""
+                        lines = text.splitlines()[-preview_lines:]
+                        if len(lines) == preview_lines and lines:
                             lines[0] = "…"
-                    
-                    # no_wrap=True prevents wrapped lines from increasing height
-                    return Text("\n".join(lines), no_wrap=True, overflow="ellipsis")
+                        lines += [""] * (preview_lines - len(lines))
+                        return Text("\n".join(lines), no_wrap=True, overflow="ellipsis")
 
-                try:
-                    with Live(
-                        _tail(""),
-                        console=console,
-                        refresh_per_second=8,
-                        transient=True,
-                    ) as live:
+                    with Live(_tail(""), console=console, refresh_per_second=8, transient=True) as live:
                         for chunk in stream_iter:
                             if chunk.startswith("[error]"):
                                 print_error(chunk)
                                 break
                             collected.append(chunk)
                             live.update(_tail("".join(collected)))
-                except KeyboardInterrupt:
-                    interrupted = True
+            except KeyboardInterrupt:
+                interrupted = True
 
-                # Render the full Markdown outside the Live context so it
-                # prints via normal terminal scrolling (no duplication).
-                if collected:
-                    console.print(Markdown("".join(collected)))
-                
-                if interrupted:
-                    print_warning("Generation interrupted.")
+        if cfg.raw_output:
+            print_assistant_done()
+        elif collected:
+            console.print(Markdown("".join(collected)))
+        
+        if interrupted:
+            print_warning("Generation interrupted.")
 
         # Save response (partial or complete) to history.
         full_response = "".join(collected)
