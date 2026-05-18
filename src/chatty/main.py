@@ -193,6 +193,10 @@ def main(argv: list[str] | None = None) -> None:
         full_response = "".join(collected)
         if full_response:
             session.add_assistant_message(full_response)
+        else:
+            # If generation failed completely or was interrupted before yielding,
+            # remove the user message so it doesn't get duplicated on retry.
+            session.undo()
 
         # Display token usage.
         token_count = session.get_token_count()

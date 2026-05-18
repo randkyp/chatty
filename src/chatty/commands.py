@@ -83,6 +83,18 @@ def handle_command(
     cmd = parts[0].lower()
     arg = parts[1] if len(parts) > 1 else ""
 
+    available_commands = [
+        "/quit", "/exit", "/clear", "/undo", "/system",
+        "/ctx", "/genmax", "/profile", "/samplers", "/save"
+    ]
+
+    matches = [c for c in available_commands if c.startswith(cmd)]
+    if len(matches) == 1:
+        cmd = matches[0]
+    elif len(matches) > 1:
+        if cmd not in matches:
+            return CommandResult(message=f"Ambiguous command '{cmd}'. Matches: {', '.join(matches)}")
+
     match cmd:
         case "/quit" | "/exit":
             return CommandResult(quit=True)
