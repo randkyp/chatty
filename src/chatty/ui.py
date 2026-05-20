@@ -149,5 +149,5 @@ def print_welcome(
         console.print("[dim]Enter sends. Shift+Enter (Esc→Enter) for newlines.[/]")
     else:
         console.print("[dim]Multiline input. Submit with Meta+Enter (Esc→Enter) or Ctrl+Enter.[/]")
-    console.print("[dim]Type /quit to exit. /clear, /undo, /system, /ctx, /genmax, /profile, /samplers, /save for more.[/]")
+    console.print("[dim]Type /quit to exit. /clear, /undo, /image, /system, /ctx, /genmax, /profile, /samplers, /save for more.[/]")
     console.print()

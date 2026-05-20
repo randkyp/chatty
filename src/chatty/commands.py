@@ -8,13 +8,16 @@ a signal to quit, or None (handled internally).
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 from rich.console import Console
 
 from chatty.chat_session import ChatSession
 from chatty.config import AppConfig, load_profile_by_name, save_profile
+from chatty.images import get_clipboard_image, encode_image_file, encode_image
 
 console = Console()
 
@@ -85,7 +88,8 @@ def handle_command(
 
     available_commands = [
         "/quit", "/exit", "/clear", "/undo", "/system",
-        "/ctx", "/genmax", "/profile", "/samplers", "/save"
+        "/ctx", "/genmax", "/profile", "/samplers", "/save",
+        "/image"
     ]
 
     matches = [c for c in available_commands if c.startswith(cmd)]
@@ -123,6 +127,9 @@ def handle_command(
 
         case "/samplers":
             return _cmd_samplers(arg, cfg)
+
+        case "/image":
+            return _cmd_image(arg, session)
 
         case "/save":
             return _cmd_save(cfg, session)
@@ -240,3 +247,53 @@ def _cmd_save(cfg: AppConfig, session: ChatSession) -> CommandResult:
         return CommandResult(message=f"Profile '{cfg.profile.name}' saved to {cfg.config_path}.")
     except Exception as e:
         return CommandResult(message=f"Failed to save: {e}")
+
+
+def _cmd_image(arg: str, session: ChatSession) -> CommandResult:
+    arg = arg.strip()
+    if not arg or arg.lower() == "clipboard":
+        return _paste_from_clipboard(session)
+
+    try:
+        # Check if the path is surrounded by quotes
+        if (arg.startswith('"') and arg.endswith('"')) or (arg.startswith("'") and arg.endswith("'")):
+            arg = arg[1:-1]
+        arg = re.sub(r'\\(.)', r'\1', arg)
+        path = Path(arg).expanduser().resolve()
+        if not path.exists():
+            return CommandResult(message=f"File not found: {arg}")
+        if not path.is_file():
+            return CommandResult(message=f"Path is not a file: {arg}")
+
+        res = encode_image_file(path)
+        if not res:
+            return CommandResult(message=f"Failed to load or encode image: {arg}")
+
+        data_url, mime = res
+        session.pending_images.append({
+            "data_url": data_url,
+            "path": str(path),
+            "mime_type": mime,
+        })
+        return CommandResult(message=f"Image attached: {path}")
+    except Exception as e:
+        return CommandResult(message=f"Error loading image: {e}")
+
+
+def _paste_from_clipboard(session: ChatSession) -> CommandResult:
+    try:
+        img_bytes = get_clipboard_image()
+        if not img_bytes:
+            return CommandResult(message="No image found in clipboard or clipboard tools are missing.")
+
+        # Convert raw clipboard image to base64
+        data_url = encode_image(img_bytes, "image/png")
+
+        session.pending_images.append({
+            "data_url": data_url,
+            "path": None,
+            "mime_type": "image/png",
+        })
+        return CommandResult(message="Image from clipboard attached.")
+    except Exception as e:
+        return CommandResult(message=f"Error pasting image: {e}")

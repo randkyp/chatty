@@ -8,6 +8,7 @@ API responses with Ctrl+C interrupt support.
 from __future__ import annotations
 
 import itertools
+import re
 import shutil
 
 from rich.live import Live
@@ -18,6 +19,7 @@ from chatty.api import fetch_model_metadata, stream_chat
 from chatty.chat_session import ChatSession, TokenCounter
 from chatty.commands import handle_command
 from chatty.config import AppConfig, load_config
+from chatty.images import extract_images_from_text
 from chatty.ui import (
     console,
     create_prompt_session,
@@ -88,7 +90,8 @@ def main(argv: list[str] | None = None) -> None:
         print_user(text)
 
         # ── Slash command handling ──────────────────────────────────────
-        if text.startswith("/") and not text.startswith("//"):
+        first_word = text.split(None, 1)[0] if text else ""
+        if text.startswith("/") and not text.startswith("//") and re.match(r"^/[a-zA-Z]+$", first_word):
             result = handle_command(text, session, cfg)
             if result.quit:
                 print_system("Goodbye!")
@@ -102,7 +105,17 @@ def main(argv: list[str] | None = None) -> None:
             text = text[1:]  # strip one leading slash
 
         # ── Send message to API ────────────────────────────────────────
-        session.add_user_message(text)
+        text, text_images = extract_images_from_text(text)
+        all_images = session.pending_images + text_images
+
+        for img in all_images:
+            if img.get("path"):
+                print_system(f" -> Attached image: {img['path']}")
+            else:
+                print_system(" -> Attached image from clipboard")
+
+        session.add_user_message(text, images=all_images)
+        session.pending_images.clear()
 
         payload_messages = session.build_payload_messages()
         if payload_messages is None:

@@ -53,7 +53,7 @@ def stream_chat(
     base_url: str,
     api_key: str | None,
     model: str,
-    messages: list[dict[str, str]],
+    messages: list[dict[str, Any]],
     samplers: dict[str, Any],
     genmax: int,
     debug: bool = False,
