@@ -138,7 +138,7 @@ def _cmd_system(arg: str, session: ChatSession, cfg: AppConfig) -> CommandResult
         if session.system_prompt:
             return CommandResult(message=f"System prompt: {session.system_prompt}")
         return CommandResult(message="No system prompt set.")
-    if arg.lower() in ("disable", "none"):
+    if arg.lower() in ("disable", "none", "clear", "del", "rm", "off"):
         session.system_prompt = None
         cfg.profile.system_prompt = None
         return CommandResult(message="System prompt disabled.")
