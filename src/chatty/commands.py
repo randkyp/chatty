@@ -89,7 +89,7 @@ def handle_command(
     available_commands = [
         "/quit", "/exit", "/clear", "/undo", "/system",
         "/ctx", "/genmax", "/profile", "/samplers", "/save",
-        "/image"
+        "/image", "/list", "/help"
     ]
 
     matches = [c for c in available_commands if c.startswith(cmd)]
@@ -133,6 +133,12 @@ def handle_command(
 
         case "/save":
             return _cmd_save(cfg, session)
+
+        case "/list":
+            return _cmd_list(session)
+
+        case "/help":
+            return _cmd_help()
 
         case _:
             return CommandResult(message=f"Unknown command: {cmd}")
@@ -297,3 +303,113 @@ def _paste_from_clipboard(session: ChatSession) -> CommandResult:
         return CommandResult(message="Image from clipboard attached.")
     except Exception as e:
         return CommandResult(message=f"Error pasting image: {e}")
+
+
+def _cmd_list(session: ChatSession) -> CommandResult:
+    import shutil
+    from rich.text import Text
+
+    payload_messages = session.build_payload_messages()
+    if payload_messages is None:
+        console.print("[warning]⚠ Could not build context payload (budget exceeded).[/]")
+        return CommandResult()
+    if not payload_messages:
+        console.print("[system_msg]No messages in current context window.[/]")
+        return CommandResult()
+
+    cols, _ = shutil.get_terminal_size((80, 24))
+    margin = 4
+    available_width = max(cols - margin, 20)
+
+    total_msgs = len(payload_messages)
+    index_width = len(str(total_msgs))
+
+    for idx, msg in enumerate(payload_messages, 1):
+        role = msg.get("role", "user")
+        content = msg.get("content", "")
+
+        # Extract text from content
+        text = ""
+        if isinstance(content, str):
+            text = content
+        elif isinstance(content, list):
+            text_parts = []
+            for part in content:
+                if part.get("type") == "text":
+                    text_parts.append(part.get("text", ""))
+                elif part.get("type") == "image_url":
+                    text_parts.append("[Image]")
+            text = "".join(text_parts)
+
+        # Get first line, stripped of leading/trailing whitespace
+        first_line = text.splitlines()[0].strip() if text else ""
+
+        # Format prefix and select style
+        if role == "system":
+            prefix = "⚙️ "
+            style = "system_msg"
+        elif role == "user":
+            prefix = "👤 "
+            style = "user"
+        elif role == "assistant":
+            prefix = "🤖 "
+            style = "assistant"
+        else:
+            prefix = f"{role.upper()}: "
+            style = "system_msg"
+
+        # Format index prefix right-aligned (e.g. " 1. ") using "1." notation
+        num_str = f"{idx}."
+        idx_prefix = num_str.rjust(index_width + 1) + " "
+        idx_len = len(idx_prefix)
+        prefix_len = len(prefix)
+
+        max_content_len = available_width - (idx_len + prefix_len)
+
+        if len(first_line) > max_content_len:
+            # We want total length of content_show to be max_content_len.
+            # Unicode ellipsis "…" has length 1.
+            trunc_len = max_content_len - 1
+            if trunc_len > 0:
+                content_show = first_line[:trunc_len] + "…"
+            else:
+                content_show = "…"
+        else:
+            content_show = first_line
+
+        line_text = Text()
+        line_text.append(idx_prefix, style="dim")
+        line_text.append(prefix, style=style)
+        line_text.append(content_show)
+        console.print(line_text)
+
+    return CommandResult()
+
+
+def _cmd_help() -> CommandResult:
+    from rich.text import Text
+
+    help_lines = [
+        ("/help", "Show this help summary."),
+        ("/quit, /exit", "Exit the application."),
+        ("/clear", "Clear active chat history (excluding system prompt)."),
+        ("/undo", "Remove the last user/assistant exchange."),
+        ("/list", "Preview first line of active context window messages."),
+        ("/system [prompt]", "Show, set, or clear the system prompt."),
+        ("/ctx [size]", "Show context window details or set context size."),
+        ("/genmax [tokens]", "Show or set max generation tokens."),
+        ("/profile [name]", "Show active profile or switch connection profile."),
+        ("/samplers [opts]", "Show, set, or remove generation samplers."),
+        ("/image [file]", "Attach an image from file path or clipboard."),
+        ("/save", "Save active profile settings to config.toml."),
+    ]
+
+    console.print("[system_msg]Available slash commands:[/]")
+    for cmd, desc in help_lines:
+        line = Text()
+        line.append(f"  {cmd:<18}", style="user")
+        line.append(" - ")
+        line.append(desc)
+        console.print(line)
+
+    return CommandResult()
