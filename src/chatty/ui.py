@@ -36,6 +36,7 @@ console = Console(theme=_theme)
 
 # ── prompt_toolkit input ───────────────────────────────────────────────────
 
+
 def _build_key_bindings(enter_sends: bool = False) -> KeyBindings:
     """Create key bindings for the input prompt.
 
@@ -47,6 +48,7 @@ def _build_key_bindings(enter_sends: bool = False) -> KeyBindings:
     kb = KeyBindings()
 
     if enter_sends:
+
         @kb.add(Keys.Enter)
         def _(event):  # type: ignore[no-untyped-def]
             """Plain Enter submits the buffer."""
@@ -57,6 +59,7 @@ def _build_key_bindings(enter_sends: bool = False) -> KeyBindings:
             """Shift+Enter (Esc→Enter) inserts a newline."""
             event.current_buffer.insert_text("\n")
     else:
+
         @kb.add(Keys.Enter)
         def _(event):  # type: ignore[no-untyped-def]
             """Plain Enter inserts a newline (multiline editing)."""
@@ -98,12 +101,15 @@ def get_user_input(session: PromptSession) -> str | None:
 
 # ── Output rendering ──────────────────────────────────────────────────────
 
+
 def print_user(msg: str) -> None:
     """Print the user's message cleanly to the scrollback buffer."""
     from rich.text import Text
+
     t = Text("You › ", style="user")
     t.append(msg)
     console.print(t)
+
 
 def print_assistant_chunk(text: str) -> None:
     """Print a raw streaming chunk (no newline, immediate flush)."""
@@ -113,7 +119,6 @@ def print_assistant_chunk(text: str) -> None:
 def print_assistant_done() -> None:
     """Print a newline after the streaming is finished."""
     console.print()
-
 
 
 def print_system(msg: str) -> None:

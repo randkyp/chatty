@@ -44,6 +44,7 @@ base_url = "http://localhost:8080"
 
 # ── Data structures ────────────────────────────────────────────────────────
 
+
 @dataclass
 class Profile:
     """Runtime representation of a single connection profile."""
@@ -72,6 +73,7 @@ class AppConfig:
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────
+
 
 def _ensure_config(path: Path) -> Path:
     """Create a default config file if it doesn't exist. Returns the path."""
@@ -112,43 +114,58 @@ def load_profile_by_name(config_path: Path, name: str) -> tuple[Profile, dict[st
 
 # ── CLI argument parsing ───────────────────────────────────────────────────
 
+
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         prog="chatty",
         description="Interactive CLI chat with any OpenAI-compatible endpoint.",
     )
     parser.add_argument(
-        "-p", "--profile", default="default",
+        "-p",
+        "--profile",
+        default="default",
         help="Profile name from config.toml (default: 'default').",
     )
     parser.add_argument(
-        "-c", "--config", default="config.toml",
+        "-c",
+        "--config",
+        default="config.toml",
         help="Path to config.toml (default: ./config.toml).",
     )
     parser.add_argument(
-        "-m", "--model", default=None,
+        "-m",
+        "--model",
+        default=None,
         help="Override model name for this session.",
     )
     parser.add_argument(
-        "-s", "--system", default=None,
+        "-s",
+        "--system",
+        default=None,
         help="Override system prompt for this session.",
     )
     parser.add_argument(
-        "--debug", action="store_true",
+        "--debug",
+        action="store_true",
         help="Print the JSON payload before each API call.",
     )
     parser.add_argument(
-        "-e", "--enter-sends", action="store_true",
+        "-e",
+        "--enter-sends",
+        action="store_true",
         help="Enter sends message (Shift+Enter for newlines).",
     )
     parser.add_argument(
-        "-r", "--raw", action="store_true",
+        "-r",
+        "--raw",
+        action="store_true",
         help="Raw streaming output (no Markdown rendering).",
     )
     return parser.parse_args(argv)
 
 
 # ── Top-level loader ──────────────────────────────────────────────────────
+
 
 def load_config(argv: list[str] | None = None) -> AppConfig:
     """Parse CLI args, read TOML, apply overrides, return AppConfig."""
@@ -188,6 +205,7 @@ def load_config(argv: list[str] | None = None) -> AppConfig:
 
 
 # ── Save back to TOML ────────────────────────────────────────────────────
+
 
 def _serialise_value(v: Any) -> str:
     """Serialise a single Python value to a TOML literal."""

@@ -102,11 +102,7 @@ def stream_chat(
                             return
                         try:
                             chunk = json.loads(data_str)
-                            delta = (
-                                chunk.get("choices", [{}])[0]
-                                .get("delta", {})
-                                .get("content", "")
-                            )
+                            delta = chunk.get("choices", [{}])[0].get("delta", {}).get("content", "")
                             if delta:
                                 yield delta
                         except (json.JSONDecodeError, IndexError):

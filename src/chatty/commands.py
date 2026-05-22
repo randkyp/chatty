@@ -17,7 +17,7 @@ from rich.console import Console
 
 from chatty.chat_session import ChatSession
 from chatty.config import AppConfig, load_profile_by_name, save_profile
-from chatty.images import get_clipboard_image, encode_image_file, encode_image
+from chatty.images import encode_image, encode_image_file, get_clipboard_image
 
 console = Console()
 
@@ -31,6 +31,7 @@ class CommandResult:
 
 
 # ── Sampler helpers ────────────────────────────────────────────────────────
+
 
 def _parse_value(raw: str) -> Any:
     """Parse a string into a native Python type (bool, int, float, or str)."""
@@ -75,6 +76,7 @@ def _del_nested(d: dict[str, Any], dotpath: str) -> bool:
 
 # ── Command dispatch ──────────────────────────────────────────────────────
 
+
 def handle_command(
     raw_input: str,
     session: ChatSession,
@@ -87,9 +89,21 @@ def handle_command(
     arg = parts[1] if len(parts) > 1 else ""
 
     available_commands = [
-        "/quit", "/exit", "/clear", "/undo", "/system",
-        "/ctx", "/genmax", "/profile", "/samplers", "/sampelrs", "/save",
-        "/load", "/image", "/list", "/help"
+        "/quit",
+        "/exit",
+        "/clear",
+        "/undo",
+        "/system",
+        "/ctx",
+        "/genmax",
+        "/profile",
+        "/samplers",
+        "/sampelrs",
+        "/save",
+        "/load",
+        "/image",
+        "/list",
+        "/help",
     ]
 
     matches = [c for c in available_commands if c.startswith(cmd)]
@@ -148,6 +162,7 @@ def handle_command(
 
 
 # ── Individual command handlers ───────────────────────────────────────────
+
 
 def _cmd_system(arg: str, session: ChatSession, cfg: AppConfig) -> CommandResult:
     if not arg:
@@ -415,7 +430,7 @@ def _cmd_image(arg: str, session: ChatSession) -> CommandResult:
         # Check if the path is surrounded by quotes
         if (arg.startswith('"') and arg.endswith('"')) or (arg.startswith("'") and arg.endswith("'")):
             arg = arg[1:-1]
-        arg = re.sub(r'\\(.)', r'\1', arg)
+        arg = re.sub(r"\\(.)", r"\1", arg)
         path = Path(arg).expanduser().resolve()
         if not path.exists():
             return CommandResult(message=f"File not found: {arg}")
@@ -427,11 +442,13 @@ def _cmd_image(arg: str, session: ChatSession) -> CommandResult:
             return CommandResult(message=f"Failed to load or encode image: {arg}")
 
         data_url, mime = res
-        session.pending_images.append({
-            "data_url": data_url,
-            "path": str(path),
-            "mime_type": mime,
-        })
+        session.pending_images.append(
+            {
+                "data_url": data_url,
+                "path": str(path),
+                "mime_type": mime,
+            }
+        )
         return CommandResult(message=f"Image attached: {path}")
     except Exception as e:
         return CommandResult(message=f"Error loading image: {e}")
@@ -446,11 +463,13 @@ def _paste_from_clipboard(session: ChatSession) -> CommandResult:
         # Convert raw clipboard image to base64
         data_url = encode_image(img_bytes, "image/png")
 
-        session.pending_images.append({
-            "data_url": data_url,
-            "path": None,
-            "mime_type": "image/png",
-        })
+        session.pending_images.append(
+            {
+                "data_url": data_url,
+                "path": None,
+                "mime_type": "image/png",
+            }
+        )
         return CommandResult(message="Image from clipboard attached.")
     except Exception as e:
         return CommandResult(message=f"Error pasting image: {e}")
@@ -458,6 +477,7 @@ def _paste_from_clipboard(session: ChatSession) -> CommandResult:
 
 def _cmd_list(session: ChatSession) -> CommandResult:
     import shutil
+
     from rich.text import Text
 
     payload_messages = session.build_payload_messages()

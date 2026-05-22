@@ -14,8 +14,8 @@ from typing import Any
 import httpx
 import tiktoken
 
-
 # ── Token counting ─────────────────────────────────────────────────────────
+
 
 @dataclass
 class TokenCounter:
@@ -88,6 +88,7 @@ class TokenCounter:
 
 # ── Message history management ─────────────────────────────────────────────
 
+
 @dataclass
 class ChatSession:
     """Manages the message history and context window."""
@@ -132,10 +133,12 @@ class ChatSession:
 
                 if images:
                     for img in images:
-                        parts.append({
-                            "type": "image_url",
-                            "image_url": {"url": img["data_url"]},
-                        })
+                        parts.append(
+                            {
+                                "type": "image_url",
+                                "image_url": {"url": img["data_url"]},
+                            }
+                        )
 
                 prev_msg["content"] = parts
         else:
@@ -144,10 +147,12 @@ class ChatSession:
                 if content:
                     parts.append({"type": "text", "text": content})
                 for img in images:
-                    parts.append({
-                        "type": "image_url",
-                        "image_url": {"url": img["data_url"]},
-                    })
+                    parts.append(
+                        {
+                            "type": "image_url",
+                            "image_url": {"url": img["data_url"]},
+                        }
+                    )
                 self.messages.append({"role": role, "content": parts})
             else:
                 self.messages.append({"role": role, "content": content})

@@ -18,9 +18,7 @@ from pathlib import Path
 from typing import Any
 
 # Regular expression to match @/path or @"/path" or @'/path'
-IMAGE_PATH_RE = re.compile(
-    r'@(?:(["\'])([^"\']+)\1|((?:[^\s"\'()\[\]{}*?<>|\\]|\\.)+))'
-)
+IMAGE_PATH_RE = re.compile(r'@(?:(["\'])([^"\']+)\1|((?:[^\s"\'()\[\]{}*?<>|\\]|\\.)+))')
 
 
 def encode_image(image_bytes: bytes, mime_type: str = "image/png") -> str:
@@ -57,7 +55,7 @@ def extract_images_from_text(text: str) -> tuple[str, list[dict[str, Any]]]:
     def replacer(match: re.Match[str]) -> str:
         path_str = (match.group(2) or match.group(3) or "").strip()
         try:
-            path_str = re.sub(r'\\(.)', r'\1', path_str)
+            path_str = re.sub(r"\\(.)", r"\1", path_str)
             path = Path(path_str).expanduser().resolve()
             if path.exists() and path.is_file():
                 resolved_str = str(path)
@@ -66,11 +64,13 @@ def extract_images_from_text(text: str) -> tuple[str, list[dict[str, Any]]]:
                     res = encode_image_file(path)
                     if res:
                         data_url, mime = res
-                        images.append({
-                            "data_url": data_url,
-                            "path": resolved_str,
-                            "mime_type": mime,
-                        })
+                        images.append(
+                            {
+                                "data_url": data_url,
+                                "path": resolved_str,
+                                "mime_type": mime,
+                            }
+                        )
                 # If it's a valid file, remove it from the text
                 return ""
         except Exception:
@@ -107,7 +107,7 @@ def _get_clipboard_image_macos() -> bytes | None:
             pass
 
     # AppleScript that attempts to retrieve PNG first, falling back to TIFF
-    script = f'''
+    script = f"""
     try
         set theFile to POSIX file "{temp_file}"
         set theImage to the clipboard as «class PNGf»
@@ -129,7 +129,7 @@ def _get_clipboard_image_macos() -> bytes | None:
             return "NONE"
         end try
     end try
-    '''
+    """
     try:
         proc = subprocess.run(
             ["osascript", "-e", script],

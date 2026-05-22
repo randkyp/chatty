@@ -1,6 +1,6 @@
 # Chatty
 
-Interactive CLI chat client for any OpenAI-compatible `/v1/chat/completions` endpoint.
+An interactive OpenAI-compatible `/v1/chat/completions` client for your TTY.
 
 ## Quick Start
 
@@ -56,3 +56,41 @@ chatty
 | `/save [file]` | Save active chat session to session.json or custom file |
 | `/load [file]` | Load chat session from session.json or custom file |
 
+## Development
+
+`chatty` uses `uv` for Python package and dependency management.
+
+### Setup and Testing
+
+To install development dependencies:
+```bash
+uv sync --all-groups
+```
+
+To run the test suite:
+```bash
+uv run pytest
+```
+
+### Code Quality (Linting & Formatting)
+
+We use [Ruff](https://github.com/astral-sh/ruff) for extremely fast linting and code formatting.
+
+To check for lint errors:
+```bash
+uv run ruff check .
+```
+
+To automatically format the code:
+```bash
+uv run ruff format .
+```
+
+### Pre-commit Hooks
+
+We use `pre-commit` to ensure all changes are automatically linted and formatted before being committed. Git hooks are installed and will run on `git commit`.
+
+If you ever need to manually run pre-commit on all files:
+```bash
+uv run pre-commit run --all-files
+```

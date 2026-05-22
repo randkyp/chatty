@@ -146,7 +146,7 @@ def main(argv: list[str] | None = None) -> None:
         # Print a header for the streaming response.
         console.print()
         stream_iter = iter(stream)
-        
+
         try:
             with Live(
                 Text.from_markup("[assistant]Assistant ›[/] [dim italic]Thinking...[/]"),
@@ -198,7 +198,7 @@ def main(argv: list[str] | None = None) -> None:
             print_assistant_done()
         elif collected:
             console.print(Markdown("".join(collected)))
-        
+
         if interrupted:
             print_warning("Generation interrupted.")
 
