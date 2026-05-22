@@ -32,6 +32,7 @@ chatty
 
 - **Multiline** by default — press `Enter` for a new line.
 - **Submit** with `Meta+Enter` (Esc → Enter) or `Ctrl+Enter`.
+- **Image Attachments**: Type `@/path/to/image.png` anywhere in your message to attach an image inline.
 - **Ctrl+C** during generation stops the stream gracefully.
 - **Ctrl+D** exits.
 
@@ -50,4 +51,5 @@ chatty
 | `/samplers disable` | Clear all samplers |
 | `/samplers key value` | Set a sampler (dot notation supported) |
 | `/samplers rm key` | Remove a sampler |
+| `/image [path]` | Attach an image from file path or clipboard |
 | `/save` | Save runtime config back to TOML |

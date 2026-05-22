@@ -24,13 +24,15 @@ Use `argparse` (or a modern equivalent) to handle the following startup argument
 - `--model`, `-m`: Override the model name for the current session.
 - `--system`, `-s`: Override the system prompt for the current session.
 - `--debug`: Enable debug mode. When active, print the exact JSON payload being sent to the API before streaming the response.
+- `--enter-sends`, `-e`: Enable immediate message submission on pressing Enter, using Shift+Enter (Esc then Enter) to insert newlines.
+- `--raw`, `-r`: Output raw assistant streaming responses directly to stdout instead of rendering them via Markdown formatting.
 
 ### 4. API & Context Management
 - Maintain an internal list of message dictionaries (`[{"role": "user", "content": "..."}, ...]`).
 - **Dynamic Limits:** If `ctx_size` or `genmax` are not provided in the profile, attempt to fetch them from the server on initialization (e.g., via `/v1/models` metadata). If unavailable, use sensible fallbacks (e.g., 8192 for context, 1024 for genmax).
 - **Explicit Context Clipping:** Before sending, clip history to fit within `ctx_size - genmax` (reserving room for the response).
-  - *Token Counting:* To count tokens, the client must first attempt to call the server's `/tokenize` endpoint (common in local backends like llama.cpp). If the server does not support it (e.g., returns 404 or a connection error), fallback to using `tiktoken` (e.g., `cl100k_base`).
-  - *Message Concatenation:* Consecutive `user` or `assistant` messages are disallowed and must be concatenated into a single message.
+  - *Token Counting:* To count tokens, the client must first attempt to call the server's `/tokenize` endpoint (common in local backends like llama.cpp). If the server does not support it (e.g., returns 404 or a connection error), fallback to using `tiktoken` (e.g., `cl100k_base`). Each attached image contributes a 1000-token safe buffer cost to the token estimate.
+  - *Message Concatenation:* Consecutive `user` or `assistant` messages are disallowed and must be concatenated into a single message. If messages contain attached images, they are combined structurally as a list of text and image_url blocks.
   - *Priority 1:* The system message is always sent at the top of the context. There should only be zero or one system message in the entire context.
   - *Priority 2:* Keep the newest messages. Always drop oldest `user`/`assistant` pairs until the token count fits. Ensure the resulting history always starts with a `system` then `user`, or simply `user` (never an `assistant` as the first message).
   - If the system prompt + latest user message exceeds the limit, show a `rich` warning and do not send the request.
@@ -49,9 +51,17 @@ Parse everything after the command as the argument (e.g., `/system You are a bot
 - `/samplers disable`: Clears all active samplers for the session.
 - `/samplers [key] [value]`: Updates a sampler. Support dot notation (e.g., `/samplers chat_template_kwargs.add_generation_prompt true`) and parse booleans/numbers natively.
 - `/samplers rm [key]`: Removes a sampler (supports dot notation).
+- `/image [path|clipboard]`: Attach an image from a local path or system clipboard (defaults to clipboard if empty).
 - `/save`: Saves the current session's runtime configuration (system prompt, active samplers, limits) back to the active profile in `config.toml`.
 
-### 6. Packaging
+### 6. Multimodal Image Attachments
+- **Image Scanning:** Scan user input text for `@path` patterns (supporting unquoted/quoted paths and escaped spaces) pointing to existing local image files. If a valid image file is resolved, automatically base64-encode it and strip the `@path` text pattern from the final prompt message.
+- **Clipboard Integration:**
+  - On macOS, retrieve images using AppleScript (`osascript`) and convert to PNG if needed (using standard macOS tool `sips`).
+  - On Linux, retrieve images using system clipboard utilities (`wl-paste` or `xclip`).
+- **Payload Format:** When one or more images are attached, structuralise the message `content` as a list of parts, with `{"type": "text", "text": "..."}` and `{"type": "image_url", "image_url": {"url": "data:<mime>;base64,..."}}`.
+
+### 7. Packaging
 Provide a `pyproject.toml` configured for `uv`. Include dependencies (`prompt_toolkit`, `rich`, `httpx`, `tiktoken`, `tomli`/`tomllib`) and define a CLI entry point (e.g., `chatty`) so it can be installed via `uv tool install`. Do not provide a `requirements.txt`.
 
 Generate the code, split by file. Add brief comments explaining module interactions.
