@@ -88,8 +88,8 @@ def handle_command(
 
     available_commands = [
         "/quit", "/exit", "/clear", "/undo", "/system",
-        "/ctx", "/genmax", "/profile", "/samplers", "/save",
-        "/image", "/list", "/help"
+        "/ctx", "/genmax", "/profile", "/samplers", "/sampelrs", "/save",
+        "/load", "/image", "/list", "/help"
     ]
 
     matches = [c for c in available_commands if c.startswith(cmd)]
@@ -125,14 +125,17 @@ def handle_command(
         case "/profile":
             return _cmd_profile(arg, session, cfg)
 
-        case "/samplers":
-            return _cmd_samplers(arg, cfg)
+        case "/samplers" | "/sampelrs":
+            return _cmd_samplers(arg, cfg, session)
 
         case "/image":
             return _cmd_image(arg, session)
 
         case "/save":
-            return _cmd_save(cfg, session)
+            return _cmd_save_session(arg, session, cfg)
+
+        case "/load":
+            return _cmd_load_session(arg, session, cfg)
 
         case "/list":
             return _cmd_list(session)
@@ -212,10 +215,21 @@ def _cmd_profile(arg: str, session: ChatSession, cfg: AppConfig) -> CommandResul
         return CommandResult(message=f"Profile '{arg}' not found.")
 
 
-def _cmd_samplers(arg: str, cfg: AppConfig) -> CommandResult:
+def _cmd_samplers(arg: str, cfg: AppConfig, session: ChatSession) -> CommandResult:
     parts = arg.split(None, 1)
     sub = parts[0].lower() if parts else ""
     sub_arg = parts[1] if len(parts) > 1 else ""
+
+    if sub == "save":
+        # Sync runtime state back to profile before saving.
+        cfg.profile.system_prompt = session.system_prompt
+        cfg.profile.ctx_size = session.ctx_size
+        cfg.profile.genmax = session.genmax
+        try:
+            save_profile(cfg)
+            return CommandResult(message=f"Profile '{cfg.profile.name}' saved to {cfg.config_path}.")
+        except Exception as e:
+            return CommandResult(message=f"Failed to save: {e}")
 
     if not sub or sub == "show":
         if cfg.profile.samplers:
@@ -243,16 +257,122 @@ def _cmd_samplers(arg: str, cfg: AppConfig) -> CommandResult:
     return CommandResult(message=f"Set sampler '{key}' = {value!r}.")
 
 
-def _cmd_save(cfg: AppConfig, session: ChatSession) -> CommandResult:
-    # Sync runtime state back to profile before saving.
-    cfg.profile.system_prompt = session.system_prompt
-    cfg.profile.ctx_size = session.ctx_size
-    cfg.profile.genmax = session.genmax
+def _cmd_save_session(arg: str, session: ChatSession, cfg: AppConfig) -> CommandResult:
+    config_dir = cfg.config_path.parent
+    arg = arg.strip()
+
+    if arg:
+        path = Path(arg)
+        if not path.is_absolute():
+            path = config_dir / path
+    else:
+        jsonl_path = config_dir / "session.jsonl"
+        json_path = config_dir / "session.json"
+        if jsonl_path.exists() and not json_path.exists():
+            path = jsonl_path
+        else:
+            path = json_path
+
+    use_jsonl = path.suffix == ".jsonl"
+
     try:
-        save_profile(cfg)
-        return CommandResult(message=f"Profile '{cfg.profile.name}' saved to {cfg.config_path}.")
+        if use_jsonl:
+            with open(path, "w", encoding="utf-8") as f:
+                metadata = {
+                    "system_prompt": session.system_prompt,
+                    "ctx_size": session.ctx_size,
+                    "genmax": session.genmax,
+                }
+                f.write(json.dumps(metadata, ensure_ascii=False) + "\n")
+                for msg in session.messages:
+                    f.write(json.dumps(msg, ensure_ascii=False) + "\n")
+        else:
+            data = {
+                "system_prompt": session.system_prompt,
+                "ctx_size": session.ctx_size,
+                "genmax": session.genmax,
+                "messages": session.messages,
+            }
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump(data, f, indent=2, ensure_ascii=False)
+
+        return CommandResult(message=f"Session saved to {path}.")
     except Exception as e:
-        return CommandResult(message=f"Failed to save: {e}")
+        return CommandResult(message=f"Failed to save session: {e}")
+
+
+def _cmd_load_session(arg: str, session: ChatSession, cfg: AppConfig) -> CommandResult:
+    config_dir = cfg.config_path.parent
+    arg = arg.strip()
+
+    if arg:
+        path = Path(arg)
+        if not path.is_absolute():
+            path = config_dir / path
+        if not path.exists():
+            return CommandResult(message=f"Session file not found: {path}")
+    else:
+        json_path = config_dir / "session.json"
+        jsonl_path = config_dir / "session.jsonl"
+        if json_path.exists():
+            path = json_path
+        elif jsonl_path.exists():
+            path = jsonl_path
+        else:
+            return CommandResult(message=f"No saved session found in {config_dir}.")
+
+    try:
+        messages = []
+        system_prompt = None
+        ctx_size = None
+        genmax = None
+
+        if path.suffix == ".jsonl":
+            with open(path, "r", encoding="utf-8") as f:
+                for line in f:
+                    if not line.strip():
+                        continue
+                    data = json.loads(line)
+                    if "role" in data and "content" in data:
+                        messages.append(data)
+                    else:
+                        if "system_prompt" in data:
+                            system_prompt = data["system_prompt"]
+                        if "ctx_size" in data:
+                            ctx_size = data["ctx_size"]
+                        if "genmax" in data:
+                            genmax = data["genmax"]
+        else:
+            with open(path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            if isinstance(data, dict):
+                system_prompt = data.get("system_prompt")
+                ctx_size = data.get("ctx_size")
+                genmax = data.get("genmax")
+                messages = data.get("messages", [])
+            elif isinstance(data, list):
+                messages = data
+
+        session.messages = messages
+        if system_prompt is not None:
+            session.system_prompt = system_prompt
+        if ctx_size is not None:
+            session.ctx_size = ctx_size
+        if genmax is not None:
+            session.genmax = genmax
+
+        session.pending_images.clear()
+
+        if system_prompt is not None:
+            cfg.profile.system_prompt = system_prompt
+        if ctx_size is not None:
+            cfg.profile.ctx_size = ctx_size
+        if genmax is not None:
+            cfg.profile.genmax = genmax
+
+        return CommandResult(message=f"Session restored from {path} ({len(messages)} messages loaded).")
+    except Exception as e:
+        return CommandResult(message=f"Failed to load session: {e}")
 
 
 def _cmd_image(arg: str, session: ChatSession) -> CommandResult:
@@ -399,9 +519,10 @@ def _cmd_help() -> CommandResult:
         ("/ctx [size]", "Show context window details or set context size."),
         ("/genmax [tokens]", "Show or set max generation tokens."),
         ("/profile [name]", "Show active profile or switch connection profile."),
-        ("/samplers [opts]", "Show, set, or remove generation samplers."),
+        ("/samplers [opts]", "Show, set, remove samplers, or save settings (/samplers save)."),
         ("/image [file]", "Attach an image from file path or clipboard."),
-        ("/save", "Save active profile settings to config.toml."),
+        ("/save [file]", "Save active chat session to session.json or custom file."),
+        ("/load [file]", "Load chat session from session.json or custom file."),
     ]
 
     console.print("[system_msg]Available slash commands:[/]")

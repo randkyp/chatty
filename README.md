@@ -51,5 +51,8 @@ chatty
 | `/samplers disable` | Clear all samplers |
 | `/samplers key value` | Set a sampler (dot notation supported) |
 | `/samplers rm key` | Remove a sampler |
+| `/samplers save` | Save runtime config back to config.toml |
 | `/image [path]` | Attach an image from file path or clipboard |
-| `/save` | Save runtime config back to TOML |
+| `/save [file]` | Save active chat session to session.json or custom file |
+| `/load [file]` | Load chat session from session.json or custom file |
+
