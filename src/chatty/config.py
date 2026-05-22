@@ -153,7 +153,21 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 def load_config(argv: list[str] | None = None) -> AppConfig:
     """Parse CLI args, read TOML, apply overrides, return AppConfig."""
     args = parse_args(argv)
-    config_path = _ensure_config(Path(args.config))
+    config_arg = Path(args.config)
+    if config_arg.is_absolute():
+        config_path = _ensure_config(config_arg)
+    else:
+        home_config_dir = Path.home() / ".config" / "chatty"
+        home_config_path = home_config_dir / config_arg
+        local_config_path = config_arg
+
+        if home_config_path.exists():
+            config_path = home_config_path
+        elif local_config_path.exists():
+            config_path = local_config_path
+        else:
+            config_path = _ensure_config(home_config_path)
+
     raw = tomllib.loads(config_path.read_text())
     profile = _load_profile(raw, args.profile)
 

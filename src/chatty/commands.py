@@ -258,26 +258,32 @@ def _cmd_samplers(arg: str, cfg: AppConfig, session: ChatSession) -> CommandResu
 
 
 def _cmd_save_session(arg: str, session: ChatSession, cfg: AppConfig) -> CommandResult:
-    config_dir = cfg.config_path.parent
+    home_config_dir = Path.home() / ".config" / "chatty"
     arg = arg.strip()
 
     if arg:
         path = Path(arg)
-        if not path.is_absolute():
-            path = config_dir / path
-    else:
-        jsonl_path = config_dir / "session.jsonl"
-        json_path = config_dir / "session.json"
-        if jsonl_path.exists() and not json_path.exists():
-            path = jsonl_path
+        if path.is_absolute():
+            resolved_path = path
+        elif arg.startswith("./") or arg.startswith("../") or arg.startswith(".\\") or arg.startswith("..\\"):
+            resolved_path = path.resolve()
         else:
-            path = json_path
+            resolved_path = home_config_dir / path
+    else:
+        jsonl_path = home_config_dir / "session.jsonl"
+        json_path = home_config_dir / "session.json"
+        if jsonl_path.exists() and not json_path.exists():
+            resolved_path = jsonl_path
+        else:
+            resolved_path = json_path
 
-    use_jsonl = path.suffix == ".jsonl"
+    use_jsonl = resolved_path.suffix == ".jsonl"
 
     try:
+        resolved_path.parent.mkdir(parents=True, exist_ok=True)
+
         if use_jsonl:
-            with open(path, "w", encoding="utf-8") as f:
+            with open(resolved_path, "w", encoding="utf-8") as f:
                 metadata = {
                     "system_prompt": session.system_prompt,
                     "ctx_size": session.ctx_size,
@@ -293,33 +299,58 @@ def _cmd_save_session(arg: str, session: ChatSession, cfg: AppConfig) -> Command
                 "genmax": session.genmax,
                 "messages": session.messages,
             }
-            with open(path, "w", encoding="utf-8") as f:
+            with open(resolved_path, "w", encoding="utf-8") as f:
                 json.dump(data, f, indent=2, ensure_ascii=False)
 
-        return CommandResult(message=f"Session saved to {path}.")
+        return CommandResult(message=f"Session saved to {resolved_path}.")
     except Exception as e:
         return CommandResult(message=f"Failed to save session: {e}")
 
 
 def _cmd_load_session(arg: str, session: ChatSession, cfg: AppConfig) -> CommandResult:
-    config_dir = cfg.config_path.parent
+    home_config_dir = Path.home() / ".config" / "chatty"
     arg = arg.strip()
 
     if arg:
         path = Path(arg)
-        if not path.is_absolute():
-            path = config_dir / path
-        if not path.exists():
-            return CommandResult(message=f"Session file not found: {path}")
-    else:
-        json_path = config_dir / "session.json"
-        jsonl_path = config_dir / "session.jsonl"
-        if json_path.exists():
-            path = json_path
-        elif jsonl_path.exists():
-            path = jsonl_path
+        if path.is_absolute():
+            resolved_path = path
+        elif arg.startswith("./") or arg.startswith("../") or arg.startswith(".\\") or arg.startswith("..\\"):
+            resolved_path = path.resolve()
         else:
-            return CommandResult(message=f"No saved session found in {config_dir}.")
+            home_session_path = home_config_dir / path
+            local_session_path = path
+            config_session_path = cfg.config_path.parent / path
+
+            if home_session_path.exists():
+                resolved_path = home_session_path
+            elif local_session_path.exists():
+                resolved_path = local_session_path
+            elif config_session_path.exists():
+                resolved_path = config_session_path
+            else:
+                resolved_path = home_session_path
+
+        if not resolved_path.exists():
+            return CommandResult(message=f"Session file not found: {resolved_path}")
+    else:
+        paths_to_check = [
+            home_config_dir / "session.json",
+            home_config_dir / "session.jsonl",
+            Path("session.json"),
+            Path("session.jsonl"),
+            cfg.config_path.parent / "session.json",
+            cfg.config_path.parent / "session.jsonl",
+        ]
+
+        resolved_path = None
+        for p in paths_to_check:
+            if p.exists():
+                resolved_path = p
+                break
+
+        if not resolved_path:
+            return CommandResult(message=f"No saved session found in {home_config_dir} or current directory.")
 
     try:
         messages = []
@@ -327,8 +358,8 @@ def _cmd_load_session(arg: str, session: ChatSession, cfg: AppConfig) -> Command
         ctx_size = None
         genmax = None
 
-        if path.suffix == ".jsonl":
-            with open(path, "r", encoding="utf-8") as f:
+        if resolved_path.suffix == ".jsonl":
+            with open(resolved_path, "r", encoding="utf-8") as f:
                 for line in f:
                     if not line.strip():
                         continue
@@ -343,7 +374,7 @@ def _cmd_load_session(arg: str, session: ChatSession, cfg: AppConfig) -> Command
                         if "genmax" in data:
                             genmax = data["genmax"]
         else:
-            with open(path, "r", encoding="utf-8") as f:
+            with open(resolved_path, "r", encoding="utf-8") as f:
                 data = json.load(f)
             if isinstance(data, dict):
                 system_prompt = data.get("system_prompt")
@@ -370,7 +401,7 @@ def _cmd_load_session(arg: str, session: ChatSession, cfg: AppConfig) -> Command
         if genmax is not None:
             cfg.profile.genmax = genmax
 
-        return CommandResult(message=f"Session restored from {path} ({len(messages)} messages loaded).")
+        return CommandResult(message=f"Session restored from {resolved_path} ({len(messages)} messages loaded).")
     except Exception as e:
         return CommandResult(message=f"Failed to load session: {e}")
 
