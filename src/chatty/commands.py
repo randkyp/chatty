@@ -543,11 +543,11 @@ def _cmd_list(session: ChatSession) -> CommandResult:
 
         # Format prefix
         if role == "system":
-            prefix = "⚙️ "
+            prefix = "[SYS] "
         elif role == "user":
-            prefix = "👤 "
+            prefix = "[YOU] "
         elif role == "assistant":
-            prefix = "🤖 "
+            prefix = "[BOT] "
         else:
             prefix = f"{role.upper()}: "
 
