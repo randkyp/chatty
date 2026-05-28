@@ -24,6 +24,7 @@ class TokenCounter:
     base_url: str
     _use_server: bool | None = field(default=None, repr=False)
     _tiktoken_enc: Any = field(default=None, repr=False)
+    _cache: dict[str, int] = field(default_factory=dict, repr=False)
 
     def _get_tiktoken(self) -> Any:
         if self._tiktoken_enc is None:
@@ -32,6 +33,11 @@ class TokenCounter:
 
     def count(self, text: str) -> int:
         """Return token count for *text*."""
+        if not text:
+            return 0
+        if text in self._cache:
+            return self._cache[text]
+
         # First call: probe the server.
         if self._use_server is None:
             try:
@@ -43,7 +49,9 @@ class TokenCounter:
                 if resp.status_code == 200:
                     data = resp.json()
                     self._use_server = True
-                    return len(data.get("tokens", []))
+                    ans = len(data.get("tokens", []))
+                    self._cache[text] = ans
+                    return ans
                 else:
                     self._use_server = False
             except (httpx.HTTPError, Exception):
@@ -57,12 +65,16 @@ class TokenCounter:
                     timeout=5.0,
                 )
                 if resp.status_code == 200:
-                    return len(resp.json().get("tokens", []))
+                    ans = len(resp.json().get("tokens", []))
+                    self._cache[text] = ans
+                    return ans
             except (httpx.HTTPError, Exception):
                 pass
             # Fall through to tiktoken on transient failure.
 
-        return len(self._get_tiktoken().encode(text))
+        ans = len(self._get_tiktoken().encode(text))
+        self._cache[text] = ans
+        return ans
 
     def count_messages(self, messages: list[dict[str, Any]]) -> int:
         """Approximate token count for a list of chat messages.

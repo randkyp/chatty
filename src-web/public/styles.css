@@ -79,6 +79,10 @@ body {
     white-space: pre-wrap;
 }
 
+.message.system.list-result {
+    font-style: normal;
+}
+
 .message.warning {
     color: #cc6600;
 }

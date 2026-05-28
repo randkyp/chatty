@@ -6,6 +6,7 @@ let currentAssistantDiv = null;
 let currentAssistantContent = "";
 let thinkingInterval = null;
 let thinkingStartTime = null;
+let currentCommandDiv = null;
 
 // Configure marked.js to support breaks
 marked.setOptions({
@@ -78,6 +79,8 @@ ws.onmessage = function(event) {
         appendSystemMessage(data.content);
     } else if (data.type === 'system') {
         appendSystemMessage(data.content);
+    } else if (data.type === 'list_result') {
+        appendSystemMessage(data.content, 'system list-result');
     } else if (data.type === 'warning') {
         appendSystemMessage(data.content, 'warning');
     } else if (data.type === 'error') {
@@ -89,6 +92,16 @@ ws.onmessage = function(event) {
             }
         }
         appendSystemMessage(data.content, 'error');
+    } else if (data.type === 'command_start') {
+        currentCommandDiv = document.createElement('div');
+        currentCommandDiv.className = 'message system';
+        currentCommandDiv.innerHTML = `<em>Running ${data.content}...</em>`;
+        history.appendChild(currentCommandDiv);
+    } else if (data.type === 'command_end') {
+        if (currentCommandDiv) {
+            currentCommandDiv.remove();
+            currentCommandDiv = null;
+        }
     } else if (data.type === 'theme') {
         // Ignored, handled locally
     } else if (data.type === 'stream_start') {

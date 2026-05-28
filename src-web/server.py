@@ -81,13 +81,24 @@ async def websocket_endpoint(websocket: WebSocket):
                         continue
 
                     # Commands modify state and can return quit/messages
-                    result = handle_command(text, session, cfg)
+                    await send_msg("command_start", first_word)
+                    try:
+                        result = await asyncio.to_thread(handle_command, text, session, cfg)
+                    except Exception as e:
+                        await send_msg("command_end", "")
+                        await send_msg("error", f"Command Error: {e}")
+                        continue
+
+                    await send_msg("command_end", "")
                     if result.quit:
                         await send_msg("system", "Goodbye!")
                         await websocket.close()
                         break
                     if result.message:
-                        await send_msg("system", result.message)
+                        if first_word.startswith("/li") and "/list".startswith(first_word):
+                            await send_msg("list_result", result.message)
+                        else:
+                            await send_msg("system", result.message)
                     continue
 
                 if text.startswith("//"):
