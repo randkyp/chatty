@@ -74,6 +74,30 @@ def _del_nested(d: dict[str, Any], dotpath: str) -> bool:
     return False
 
 
+def _sanitize_path_arg(arg: str) -> tuple[Path, bool]:
+    """
+    Sanitize the filename portion of a path argument and add an extension if missing.
+    Returns (sanitized_path, extension_added).
+    """
+    path = Path(arg)
+    name = path.name
+
+    # Replace non-alphanumeric/hyphen/dot characters with underscore
+    sanitized = re.sub(r"[^\w\-\.]", "_", name)
+    # Collapse multiple underscores
+    sanitized = re.sub(r"_+", "_", sanitized).strip("_")
+
+    if not sanitized:
+        sanitized = "session"
+
+    added_ext = False
+    if not Path(sanitized).suffix:
+        sanitized += ".json"
+        added_ext = True
+
+    return path.with_name(sanitized), added_ext
+
+
 # ── Command dispatch ──────────────────────────────────────────────────────
 
 
@@ -277,7 +301,7 @@ def _cmd_save_session(arg: str, session: ChatSession, cfg: AppConfig) -> Command
     arg = arg.strip()
 
     if arg:
-        path = Path(arg)
+        path, _ = _sanitize_path_arg(arg)
         if path.is_absolute():
             resolved_path = path
         elif arg.startswith("./") or arg.startswith("../") or arg.startswith(".\\") or arg.startswith("..\\"):
@@ -327,24 +351,34 @@ def _cmd_load_session(arg: str, session: ChatSession, cfg: AppConfig) -> Command
     arg = arg.strip()
 
     if arg:
-        path = Path(arg)
-        if path.is_absolute():
-            resolved_path = path
-        elif arg.startswith("./") or arg.startswith("../") or arg.startswith(".\\") or arg.startswith("..\\"):
-            resolved_path = path.resolve()
-        else:
-            home_session_path = home_config_dir / path
-            local_session_path = path
-            config_session_path = cfg.config_path.parent / path
+        path, added_ext = _sanitize_path_arg(arg)
 
-            if home_session_path.exists():
-                resolved_path = home_session_path
-            elif local_session_path.exists():
-                resolved_path = local_session_path
-            elif config_session_path.exists():
-                resolved_path = config_session_path
+        def resolve_path(p: Path) -> Path:
+            if p.is_absolute():
+                return p
+            elif arg.startswith("./") or arg.startswith("../") or arg.startswith(".\\") or arg.startswith("..\\"):
+                return p.resolve()
             else:
-                resolved_path = home_session_path
+                home_session_path = home_config_dir / p
+                local_session_path = p
+                config_session_path = cfg.config_path.parent / p
+
+                if home_session_path.exists():
+                    return home_session_path
+                elif local_session_path.exists():
+                    return local_session_path
+                elif config_session_path.exists():
+                    return config_session_path
+                else:
+                    return home_session_path
+
+        resolved_path = resolve_path(path)
+
+        if not resolved_path.exists() and added_ext:
+            alt_path = path.with_suffix(".jsonl")
+            alt_resolved = resolve_path(alt_path)
+            if alt_resolved.exists():
+                resolved_path = alt_resolved
 
         if not resolved_path.exists():
             return CommandResult(message=f"Session file not found: {resolved_path}")
