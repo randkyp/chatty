@@ -476,25 +476,17 @@ def _paste_from_clipboard(session: ChatSession) -> CommandResult:
 
 
 def _cmd_list(session: ChatSession) -> CommandResult:
-    import shutil
-
-    from rich.text import Text
-
     payload_messages = session.build_payload_messages()
     if payload_messages is None:
-        console.print("[warning]⚠ Could not build context payload (budget exceeded).[/]")
-        return CommandResult()
+        return CommandResult(message="⚠ Could not build context payload (budget exceeded).")
     if not payload_messages:
-        console.print("[system_msg]No messages in current context window.[/]")
-        return CommandResult()
+        return CommandResult(message="No messages in current context window.")
 
-    cols, _ = shutil.get_terminal_size((80, 24))
-    margin = 4
-    available_width = max(cols - margin, 20)
-
+    available_width = 76
     total_msgs = len(payload_messages)
     index_width = len(str(total_msgs))
 
+    out = []
     for idx, msg in enumerate(payload_messages, 1):
         role = msg.get("role", "user")
         content = msg.get("content", "")
@@ -515,21 +507,16 @@ def _cmd_list(session: ChatSession) -> CommandResult:
         # Get first line, stripped of leading/trailing whitespace
         first_line = text.splitlines()[0].strip() if text else ""
 
-        # Format prefix and select style
+        # Format prefix
         if role == "system":
             prefix = "⚙️ "
-            style = "system_msg"
         elif role == "user":
             prefix = "👤 "
-            style = "user"
         elif role == "assistant":
             prefix = "🤖 "
-            style = "assistant"
         else:
             prefix = f"{role.upper()}: "
-            style = "system_msg"
 
-        # Format index prefix right-aligned (e.g. " 1. ") using "1." notation
         num_str = f"{idx}."
         idx_prefix = num_str.rjust(index_width + 1) + " "
         idx_len = len(idx_prefix)
@@ -538,8 +525,6 @@ def _cmd_list(session: ChatSession) -> CommandResult:
         max_content_len = available_width - (idx_len + prefix_len)
 
         if len(first_line) > max_content_len:
-            # We want total length of content_show to be max_content_len.
-            # Unicode ellipsis "…" has length 1.
             trunc_len = max_content_len - 1
             if trunc_len > 0:
                 content_show = first_line[:trunc_len] + "…"
@@ -548,18 +533,12 @@ def _cmd_list(session: ChatSession) -> CommandResult:
         else:
             content_show = first_line
 
-        line_text = Text()
-        line_text.append(idx_prefix, style="dim")
-        line_text.append(prefix, style=style)
-        line_text.append(content_show)
-        console.print(line_text)
+        out.append(f"{idx_prefix}{prefix}{content_show}")
 
-    return CommandResult()
+    return CommandResult(message="\n".join(out))
 
 
 def _cmd_help() -> CommandResult:
-    from rich.text import Text
-
     help_lines = [
         ("/help", "Show this help summary."),
         ("/quit, /exit", "Exit the application."),
@@ -576,12 +555,8 @@ def _cmd_help() -> CommandResult:
         ("/load [file]", "Load chat session from session.json or custom file."),
     ]
 
-    console.print("[system_msg]Available slash commands:[/]")
+    out = ["Available slash commands:"]
     for cmd, desc in help_lines:
-        line = Text()
-        line.append(f"  {cmd:<18}", style="user")
-        line.append(" - ")
-        line.append(desc)
-        console.print(line)
+        out.append(f"  {cmd:<18} - {desc}")
 
-    return CommandResult()
+    return CommandResult(message="\n".join(out))

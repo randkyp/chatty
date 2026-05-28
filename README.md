@@ -39,6 +39,19 @@ uv tool install .
 chatty
 ```
 
+## Web UI
+
+Chatty also includes a minimalistic, endlessly scrollable "typewriter paper" web application that maintains the same features and configurations as the CLI.
+
+To start the web server:
+```bash
+uv run python src-web/server.py
+```
+You can pass the exact same command line arguments as the TUI client (e.g. `uv run python src-web/server.py -p myprofile -m gpt-4o`). Once the server starts, navigate to `http://localhost:8000` in your browser.
+
+- Default input mode is `Enter` to send, `Shift+Enter` for a new line.
+- Switch themes on the fly by typing `/theme dark` or `/theme light` in the chat input.
+
 ## Configuration & Sessions
 
 `chatty` stores its config and chat sessions in the standard `~/.config/chatty/` directory by default.
