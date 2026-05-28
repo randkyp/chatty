@@ -26,7 +26,7 @@ body {
     padding: 0;
     background-color: var(--bg);
     color: var(--fg);
-    font-family: "TT2020Base", "TT2020 Style E", "Courier New", Courier, monospace;
+    font-family: "TT2020 Style E", "TT2020Base", "Courier New", Courier, monospace;
     font-size: 20px;
     line-height: 1.5;
     display: flex;
@@ -82,7 +82,9 @@ body {
 .message.warning {
     color: #cc6600;
 }
-[data-theme="dark"] .message.warning,
+[data-theme="dark"] .message.warning {
+    color: #ff9933;
+}
 @media (prefers-color-scheme: dark) {
     :root:not([data-theme="light"]) .message.warning {
         color: #ff9933;
@@ -92,7 +94,9 @@ body {
 .message.error {
     color: #cc0000;
 }
-[data-theme="dark"] .message.error,
+[data-theme="dark"] .message.error {
+    color: #ff6666;
+}
 @media (prefers-color-scheme: dark) {
     :root:not([data-theme="light"]) .message.error {
         color: #ff6666;
