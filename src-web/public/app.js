@@ -79,8 +79,6 @@ ws.onmessage = function(event) {
         appendSystemMessage(data.content);
     } else if (data.type === 'system') {
         appendSystemMessage(data.content);
-    } else if (data.type === 'list_result') {
-        appendSystemMessage(data.content, 'system list-result');
     } else if (data.type === 'warning') {
         appendSystemMessage(data.content, 'warning');
     } else if (data.type === 'error') {

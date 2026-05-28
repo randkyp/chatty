@@ -95,10 +95,7 @@ async def websocket_endpoint(websocket: WebSocket):
                         await websocket.close()
                         break
                     if result.message:
-                        if first_word.startswith("/li") and "/list".startswith(first_word):
-                            await send_msg("list_result", result.message)
-                        else:
-                            await send_msg("system", result.message)
+                        await send_msg("system", result.message)
                     continue
 
                 if text.startswith("//"):
