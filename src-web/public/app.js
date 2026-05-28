@@ -132,3 +132,34 @@ ws.onmessage = function(event) {
 ws.onclose = function() {
     appendSystemMessage("Connection to server closed.", 'error');
 };
+
+// --- Column Resizing Logic ---
+const paperContainer = document.getElementById('paper-container');
+let isResizing = false;
+
+function onMouseMove(e) {
+    if (!isResizing) return;
+    const centerX = window.innerWidth / 2;
+    const distanceX = Math.abs(e.clientX - centerX);
+    const newWidth = Math.max(300, distanceX * 2);
+    paperContainer.style.maxWidth = `${newWidth}px`;
+}
+
+function onMouseUp() {
+    if (isResizing) {
+        isResizing = false;
+        document.body.style.cursor = '';
+        document.removeEventListener('mousemove', onMouseMove);
+        document.removeEventListener('mouseup', onMouseUp);
+    }
+}
+
+document.querySelectorAll('.resize-handle').forEach(handle => {
+    handle.addEventListener('mousedown', function(e) {
+        isResizing = true;
+        document.body.style.cursor = 'col-resize';
+        document.addEventListener('mousemove', onMouseMove);
+        document.addEventListener('mouseup', onMouseUp);
+        e.preventDefault();
+    });
+});

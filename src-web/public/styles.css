@@ -35,10 +35,28 @@ body {
 }
 
 #paper-container {
+    position: relative;
     width: 100%;
     max-width: 80ch;
     padding: 40px 20px 50vh 20px;
     box-sizing: border-box;
+}
+
+.resize-handle {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    width: 20px;
+    cursor: col-resize;
+    z-index: 100;
+}
+
+.resize-handle.left {
+    left: -10px;
+}
+
+.resize-handle.right {
+    right: -10px;
 }
 
 .message {
