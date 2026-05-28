@@ -211,7 +211,9 @@ class ChatSession:
 
         # Check if system + latest user alone busts the budget.
         mandatory = prefix + [latest_user]
-        if self._counter.count_messages(mandatory) > budget:
+        mandatory_tokens = self._counter.count_messages(mandatory)
+        mandatory_padding = max(64, len(mandatory) * 3)
+        if mandatory_tokens + mandatory_padding > budget:
             return None  # signal: message too long
 
         # Build from newest to oldest, accumulating until we hit budget.
@@ -229,7 +231,8 @@ class ChatSession:
                 continue
 
             tokens = self._counter.count_messages(candidate)
-            if tokens <= budget:
+            padding = max(64, len(candidate) * 3)
+            if tokens + padding <= budget:
                 return candidate
             # Drop the oldest message from history.
             if len(history) <= 1:
@@ -246,3 +249,10 @@ class ChatSession:
             msgs.append({"role": "system", "content": self.system_prompt})
         msgs.extend(self.messages)
         return self._counter.count_messages(msgs)
+
+    def get_padding_count(self) -> int:
+        """Count control token padding for current history (for display)."""
+        num_msgs = len(self.messages)
+        if self.system_prompt:
+            num_msgs += 1
+        return max(64, num_msgs * 3)

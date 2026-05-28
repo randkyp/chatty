@@ -206,14 +206,18 @@ def _cmd_ctx(arg: str, session: ChatSession) -> CommandResult:
     if not arg:
         budget = session.ctx_size - session.genmax
         used = session.get_token_count()
+        padding = session.get_padding_count()
         n_msgs = len(session.messages)
-        pct = (used / budget * 100) if budget > 0 and used >= 0 else 0
+        total_used = used + padding if used >= 0 else -1
+        pct = (total_used / budget * 100) if budget > 0 and total_used >= 0 else 0
 
         lines = [
             f"Context window : {session.ctx_size} tokens",
             f"GenMax reserve : {session.genmax}",
             f"Usable budget  : {budget}",
-            f"Current usage  : ~{used} tokens ({pct:.0f}%)" if used >= 0 else "Current usage  : (unavailable)",
+            f"Current usage  : ~{used} tokens + {padding} pad ({pct:.0f}%)"
+            if used >= 0
+            else "Current usage  : (unavailable)",
             f"Messages       : {n_msgs}",
         ]
         return CommandResult(message="\n".join(lines))
