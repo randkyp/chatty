@@ -96,6 +96,81 @@ def main(argv: list[str] | None = None) -> None:
             if result.quit:
                 print_system("Goodbye!")
                 break
+
+            if result.ephemeral_prompt:
+                payload_messages = [{"role": "user", "content": result.ephemeral_prompt}]
+                model = cfg.profile.model or "default"
+                stream = stream_chat(
+                    base_url=cfg.profile.base_url,
+                    api_key=cfg.profile.api_key,
+                    model=model,
+                    messages=payload_messages,
+                    samplers=cfg.profile.samplers,
+                    genmax=session.genmax,
+                    debug=cfg.debug,
+                )
+
+                collected: list[str] = []
+                interrupted = False
+
+                console.print()
+                stream_iter = iter(stream)
+
+                try:
+                    with Live(
+                        Text.from_markup("[assistant]Assistant (ephemeral) ›[/] [dim italic]Thinking...[/]"),
+                        console=console,
+                        transient=True,
+                        refresh_per_second=4,
+                    ):
+                        first_chunk = next(stream_iter)
+                    stream_iter = itertools.chain([first_chunk], stream_iter)
+                except StopIteration:
+                    stream_iter = iter([])
+                except KeyboardInterrupt:
+                    interrupted = True
+
+                console.print("[assistant]Assistant (ephemeral) ›[/]", end="" if cfg.raw_output else "\n")
+
+                if not interrupted:
+                    try:
+                        if cfg.raw_output:
+                            for chunk in stream_iter:
+                                if chunk.startswith("[error]"):
+                                    print_error(chunk)
+                                    break
+                                print_assistant_chunk(chunk)
+                                collected.append(chunk)
+                        else:
+                            term_h = shutil.get_terminal_size((80, 24)).lines
+                            preview_lines = max(term_h // 2, 6)
+
+                            def _tail_e(t: str) -> Text:
+                                lines = t.splitlines()[-preview_lines:]
+                                if len(lines) == preview_lines and lines:
+                                    lines[0] = "…"
+                                lines += [""] * (preview_lines - len(lines))
+                                return Text("\n".join(lines), no_wrap=True, overflow="ellipsis")
+
+                            with Live(_tail_e(""), console=console, refresh_per_second=8, transient=True) as live:
+                                for chunk in stream_iter:
+                                    if chunk.startswith("[error]"):
+                                        print_error(chunk)
+                                        break
+                                    collected.append(chunk)
+                                    live.update(_tail_e("".join(collected)))
+                    except KeyboardInterrupt:
+                        interrupted = True
+
+                if cfg.raw_output:
+                    print_assistant_done()
+                elif collected:
+                    console.print(Markdown("".join(collected)))
+
+                if interrupted:
+                    print_warning("Generation interrupted.")
+                continue
+
             if result.message:
                 print_system(result.message)
             continue

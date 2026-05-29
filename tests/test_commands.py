@@ -226,3 +226,13 @@ def test_cmd_models_list(session, app_config, monkeypatch):
     res = handle_command("/models", session, app_config)
     assert "model-1" in res.message
     assert "model-2" in res.message
+
+
+def test_cmd_btw(session, app_config):
+    res_empty = handle_command("/btw", session, app_config)
+    assert "Usage: /btw <message>" in res_empty.message
+
+    res = handle_command("/btw what is 2+2?", session, app_config)
+    assert res.ephemeral_prompt == "what is 2+2?"
+    assert res.message is None
+    assert res.quit is False

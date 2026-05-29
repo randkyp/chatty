@@ -28,6 +28,7 @@ class CommandResult:
 
     quit: bool = False
     message: str | None = None
+    ephemeral_prompt: str | None = None
 
 
 # ── Sampler helpers ────────────────────────────────────────────────────────
@@ -129,6 +130,7 @@ def handle_command(
         "/list",
         "/help",
         "/models",
+        "/btw",
     ]
 
     matches = [c for c in available_commands if c.startswith(cmd)]
@@ -184,6 +186,9 @@ def handle_command(
 
         case "/models":
             return _cmd_models(arg, cfg)
+
+        case "/btw":
+            return _cmd_btw(arg)
 
         case _:
             return CommandResult(message=f"Unknown command: {cmd}")
@@ -595,6 +600,12 @@ def _cmd_models(arg: str, cfg: AppConfig) -> CommandResult:
         return CommandResult(message=f"Switched to model '{arg}'.")
 
 
+def _cmd_btw(arg: str) -> CommandResult:
+    if not arg:
+        return CommandResult(message="Usage: /btw <message>")
+    return CommandResult(ephemeral_prompt=arg)
+
+
 def _cmd_help() -> CommandResult:
     help_lines = [
         ("/help", "Show this help summary."),
@@ -611,6 +622,7 @@ def _cmd_help() -> CommandResult:
         ("/save [file]", "Save active chat session to session.json or custom file."),
         ("/load [file]", "Load chat session from session.json or custom file."),
         ("/models [name]", "List available models or switch to a specific model."),
+        ("/btw [msg]", "Send an ephemeral message without adding it to the context window."),
     ]
 
     out = ["Available slash commands:"]

@@ -95,6 +95,37 @@ async def websocket_endpoint(websocket: WebSocket):
                         await send_msg("system", "Goodbye!")
                         await websocket.close()
                         break
+
+                    if result.ephemeral_prompt:
+                        payload_messages = [{"role": "user", "content": result.ephemeral_prompt}]
+                        model = cfg.profile.model or "default"
+                        await send_msg("stream_start", "")
+
+                        def run_ephemeral_stream():
+                            try:
+                                stream = stream_chat(
+                                    base_url=cfg.profile.base_url,
+                                    api_key=cfg.profile.api_key,
+                                    model=model,
+                                    messages=payload_messages,
+                                    samplers=cfg.profile.samplers,
+                                    genmax=session.genmax,
+                                    debug=cfg.debug,
+                                )
+                                for chunk in stream:
+                                    if chunk.startswith("[error]"):
+                                        asyncio.run_coroutine_threadsafe(send_msg("error", chunk), loop)
+                                        break
+                                    asyncio.run_coroutine_threadsafe(send_msg("stream_chunk", chunk), loop)
+
+                                asyncio.run_coroutine_threadsafe(send_msg("stream_end", ""), loop)
+                            except Exception as e:
+                                asyncio.run_coroutine_threadsafe(send_msg("error", f"Unexpected Error: {e}"), loop)
+                                asyncio.run_coroutine_threadsafe(send_msg("stream_end", ""), loop)
+
+                        await asyncio.to_thread(run_ephemeral_stream)
+                        continue
+
                     if result.message:
                         await send_msg("system", result.message)
                     continue
