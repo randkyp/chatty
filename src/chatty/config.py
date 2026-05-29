@@ -34,7 +34,7 @@ base_url = "http://localhost:8080"
 # model = ""
 # system_prompt = "You are a helpful assistant."
 # ctx_size = 8192
-# genmax = 1024
+# genmax = 0
 
 # [profile.default.samplers]
 # temperature = 0.7

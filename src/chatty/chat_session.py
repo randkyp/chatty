@@ -107,7 +107,7 @@ class ChatSession:
 
     system_prompt: str | None = None
     ctx_size: int = 8192
-    genmax: int = 1024
+    genmax: int = 0
     messages: list[dict[str, Any]] = field(default_factory=list)
     pending_images: list[dict[str, Any]] = field(default_factory=list)
     _counter: TokenCounter | None = field(default=None, repr=False)

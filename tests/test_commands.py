@@ -149,7 +149,7 @@ base_url = "http://localhost:8080"
 base_url = "http://localhost:9000"
 system_prompt = "Custom Sys"
 ctx_size = 8192
-genmax = 1024
+genmax = 0
 """)
     app_config.config_path = config_file
 
@@ -159,7 +159,7 @@ genmax = 1024
     assert app_config.profile.base_url == "http://localhost:9000"
     assert session.system_prompt == "Custom Sys"
     assert session.ctx_size == 8192
-    assert session.genmax == 1024
+    assert session.genmax == 0
 
 
 def test_cmd_samplers(session, app_config):

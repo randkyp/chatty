@@ -213,7 +213,7 @@ def _cmd_ctx(arg: str, session: ChatSession) -> CommandResult:
 
         lines = [
             f"Context window : {session.ctx_size} tokens",
-            f"GenMax reserve : {session.genmax}",
+            f"GenMax reserve : {'unlimited' if session.genmax == 0 else session.genmax}",
             f"Usable budget  : {budget}",
             f"Current usage  : ~{used} tokens + {padding} pad ({pct:.0f}%)"
             if used >= 0
@@ -231,7 +231,8 @@ def _cmd_ctx(arg: str, session: ChatSession) -> CommandResult:
 
 def _cmd_genmax(arg: str, session: ChatSession, cfg: AppConfig) -> CommandResult:
     if not arg:
-        return CommandResult(message=f"Max generation tokens: {session.genmax}")
+        val = "unlimited" if session.genmax == 0 else session.genmax
+        return CommandResult(message=f"Max generation tokens: {val}")
     try:
         val = int(arg)
         session.genmax = val

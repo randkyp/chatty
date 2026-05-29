@@ -40,8 +40,8 @@ async def websocket_endpoint(websocket: WebSocket):
 
     session = ChatSession(
         system_prompt=cfg.profile.system_prompt,
-        ctx_size=cfg.profile.ctx_size or 8192,
-        genmax=cfg.profile.genmax or 1024,
+        ctx_size=cfg.profile.ctx_size if cfg.profile.ctx_size is not None else 8192,
+        genmax=cfg.profile.genmax if cfg.profile.genmax is not None else 0,
     )
     counter = TokenCounter(base_url=cfg.profile.base_url)
     session.set_counter(counter)
@@ -54,9 +54,10 @@ async def websocket_endpoint(websocket: WebSocket):
         except RuntimeError:
             pass
 
+    gen_display = "unlimited" if session.genmax == 0 else session.genmax
     welcome_msg = (
         f"Welcome to chatty ({cfg.profile.name} - {cfg.profile.model}). "
-        f"Context: {session.ctx_size}, Gen: {session.genmax}."
+        f"Context: {session.ctx_size}, Gen: {gen_display}."
     )
     await send_msg("welcome", welcome_msg)
 

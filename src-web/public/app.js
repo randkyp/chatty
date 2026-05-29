@@ -39,7 +39,7 @@ function sendMessage() {
     // Create user message element
     const userDiv = document.createElement('div');
     userDiv.className = 'message user';
-    userDiv.textContent = `› ${text}`;
+    userDiv.textContent = `> ${text}`;
     history.appendChild(userDiv);
     
     // Snap the user message to the top of the viewport

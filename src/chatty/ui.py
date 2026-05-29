@@ -148,7 +148,8 @@ def print_welcome(
     console.print("[bold magenta]✦ Chatty[/]")
     console.print(f"[bold]Profile:[/] {profile_name}")
     console.print(f"[bold]Model:[/]   {model}")
-    console.print(f"[bold]Context:[/] {ctx}  [bold]GenMax:[/] {genmax}")
+    gen_display = "unlimited" if genmax == 0 else genmax
+    console.print(f"[bold]Context:[/] {ctx}  [bold]GenMax:[/] {gen_display}")
     console.print()
     if enter_sends:
         console.print("[dim]Enter sends. Shift+Enter (Esc→Enter) for newlines.[/]")

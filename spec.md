@@ -29,7 +29,7 @@ Use `argparse` (or a modern equivalent) to handle the following startup argument
 
 ### 4. API & Context Management
 - Maintain an internal list of message dictionaries (`[{"role": "user", "content": "..."}, ...]`).
-- **Dynamic Limits:** If `ctx_size` or `genmax` are not provided in the profile, attempt to fetch them from the server on initialization (e.g., via `/v1/models` metadata). If unavailable, use sensible fallbacks (e.g., 8192 for context, 1024 for genmax).
+- **Dynamic Limits:** If `ctx_size` or `genmax` are not provided in the profile, attempt to fetch them from the server on initialization (e.g., via `/v1/models` metadata). If unavailable, use sensible fallbacks (e.g., 8192 for context, 0 for genmax).
 - **Explicit Context Clipping:** Before sending, clip history to fit within `ctx_size - genmax` (reserving room for the response).
   - *Token Counting:* To count tokens, the client must first attempt to call the server's `/tokenize` endpoint (common in local backends like llama.cpp). If the server does not support it (e.g., returns 404 or a connection error), fallback to using `tiktoken` (e.g., `cl100k_base`). Each attached image contributes a 1000-token safe buffer cost to the token estimate.
   - *Message Concatenation:* Consecutive `user` or `assistant` messages are disallowed and must be concatenated into a single message. If messages contain attached images, they are combined structurally as a list of text and image_url blocks.

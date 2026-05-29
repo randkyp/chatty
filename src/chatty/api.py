@@ -67,8 +67,9 @@ def stream_chat(
         "model": model,
         "messages": messages,
         "stream": True,
-        "max_tokens": genmax,
     }
+    if genmax > 0:
+        payload["max_tokens"] = genmax
     # Merge samplers (arbitrary nested dicts) directly into the payload.
     payload.update(samplers)
 

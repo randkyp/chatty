@@ -42,10 +42,10 @@ def _resolve_limits(cfg: AppConfig) -> None:
 
     meta = fetch_model_metadata(p.base_url, p.api_key)
 
-    if not p.ctx_size:
+    if p.ctx_size is None:
         p.ctx_size = meta.get("ctx_size", 8192)
-    if not p.genmax:
-        p.genmax = meta.get("genmax", 1024)
+    if p.genmax is None:
+        p.genmax = meta.get("genmax", 0)
     if not p.model:
         p.model = meta.get("model_id", "default")
 
@@ -56,8 +56,8 @@ def main(argv: list[str] | None = None) -> None:
 
     session = ChatSession(
         system_prompt=cfg.profile.system_prompt,
-        ctx_size=cfg.profile.ctx_size or 8192,
-        genmax=cfg.profile.genmax or 1024,
+        ctx_size=cfg.profile.ctx_size if cfg.profile.ctx_size is not None else 8192,
+        genmax=cfg.profile.genmax if cfg.profile.genmax is not None else 0,
     )
     counter = TokenCounter(base_url=cfg.profile.base_url)
     session.set_counter(counter)
