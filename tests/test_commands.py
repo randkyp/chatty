@@ -211,3 +211,18 @@ def test_cmd_save_and_load_session(session, app_config, tmp_path):
 def test_cmd_image_file_not_found(session, app_config):
     res = handle_command("/image /nonexistent/file.png", session, app_config)
     assert "File not found" in res.message
+
+
+def test_cmd_models_switch(session, app_config):
+    res = handle_command("/models gpt-4", session, app_config)
+    assert "Switched to model 'gpt-4'" in res.message
+    assert app_config.profile.model == "gpt-4"
+
+
+def test_cmd_models_list(session, app_config, monkeypatch):
+    import chatty.api
+
+    monkeypatch.setattr(chatty.api, "list_models", lambda b, a: ["model-1", "model-2"])
+    res = handle_command("/models", session, app_config)
+    assert "model-1" in res.message
+    assert "model-2" in res.message

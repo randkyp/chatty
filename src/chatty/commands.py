@@ -128,6 +128,7 @@ def handle_command(
         "/image",
         "/list",
         "/help",
+        "/models",
     ]
 
     matches = [c for c in available_commands if c.startswith(cmd)]
@@ -180,6 +181,9 @@ def handle_command(
 
         case "/help":
             return _cmd_help()
+
+        case "/models":
+            return _cmd_models(arg, cfg)
 
         case _:
             return CommandResult(message=f"Unknown command: {cmd}")
@@ -577,6 +581,20 @@ def _cmd_list(session: ChatSession) -> CommandResult:
     return CommandResult(message="\n".join(out))
 
 
+def _cmd_models(arg: str, cfg: AppConfig) -> CommandResult:
+    arg = arg.strip()
+    if not arg:
+        from chatty.api import list_models
+
+        models = list_models(cfg.profile.base_url, cfg.profile.api_key)
+        if not models:
+            return CommandResult(message="Failed to fetch models or no models found.")
+        return CommandResult(message="Available models:\n" + "\n".join(f"- {m}" for m in models))
+    else:
+        cfg.profile.model = arg
+        return CommandResult(message=f"Switched to model '{arg}'.")
+
+
 def _cmd_help() -> CommandResult:
     help_lines = [
         ("/help", "Show this help summary."),
@@ -592,6 +610,7 @@ def _cmd_help() -> CommandResult:
         ("/image [file]", "Attach an image from file path or clipboard."),
         ("/save [file]", "Save active chat session to session.json or custom file."),
         ("/load [file]", "Load chat session from session.json or custom file."),
+        ("/models [name]", "List available models or switch to a specific model."),
     ]
 
     out = ["Available slash commands:"]
