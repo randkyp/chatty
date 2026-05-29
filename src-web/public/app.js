@@ -46,8 +46,8 @@ function sendMessage() {
     userDiv.textContent = `> ${text}`;
     history.appendChild(userDiv);
     
-    // Snap the user message to the top of the viewport
-    userDiv.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    // Scroll to the bottom of the page
+    window.scrollTo({ top: document.body.scrollHeight, behavior: 'smooth' });
 
     // Local command handling for themes
     const parts = text.split(/\s+/);
