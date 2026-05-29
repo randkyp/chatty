@@ -13,9 +13,13 @@ marked.setOptions({
     breaks: true,
 });
 
-// Configure DOMPurify to allow standard markdown HTML
+// Configure KaTeX extension
+marked.use(window.markedKatex({ throwOnError: false }));
+
+// Configure DOMPurify to allow standard markdown HTML and MathML for KaTeX
 const purifyConfig = {
-    USE_PROFILES: { html: true }
+    USE_PROFILES: { html: true, mathMl: true },
+    ADD_ATTR: ['style', 'target', 'class'] // Ensure style and class are preserved for KaTeX formatting
 };
 
 // Handle auto-resizing
