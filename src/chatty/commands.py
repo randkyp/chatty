@@ -29,6 +29,7 @@ class CommandResult:
     quit: bool = False
     message: str | None = None
     ephemeral_prompt: str | None = None
+    copy_last: bool = False
 
 
 # ── Sampler helpers ────────────────────────────────────────────────────────
@@ -131,6 +132,7 @@ def handle_command(
         "/help",
         "/models",
         "/btw",
+        "/copy",
     ]
 
     matches = [c for c in available_commands if c.startswith(cmd)]
@@ -189,6 +191,9 @@ def handle_command(
 
         case "/btw":
             return _cmd_btw(arg)
+
+        case "/copy":
+            return CommandResult(copy_last=True)
 
         case _:
             return CommandResult(message=f"Unknown command: {cmd}")
@@ -623,6 +628,7 @@ def _cmd_help() -> CommandResult:
         ("/load [file]", "Load chat session from session.json or custom file."),
         ("/models [name]", "List available models or switch to a specific model."),
         ("/btw [msg]", "Send an ephemeral message without adding it to the context window."),
+        ("/copy", "Copy the last assistant response to the clipboard."),
     ]
 
     out = ["Available slash commands:"]

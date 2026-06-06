@@ -126,6 +126,18 @@ async def websocket_endpoint(websocket: WebSocket):
                         await asyncio.to_thread(run_ephemeral_stream)
                         continue
 
+                    if result.copy_last:
+                        last_msg = None
+                        for msg in reversed(session.messages):
+                            if msg.get("role") == "assistant":
+                                last_msg = msg.get("content")
+                                break
+                        if last_msg:
+                            await send_msg("copy_to_clipboard", last_msg)
+                        else:
+                            await send_msg("system", "No assistant response to copy.")
+                        continue
+
                     if result.message:
                         await send_msg("system", result.message)
                     continue

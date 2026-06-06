@@ -10,6 +10,8 @@ from __future__ import annotations
 import itertools
 import re
 import shutil
+import subprocess
+import sys
 
 from rich.live import Live
 from rich.markdown import Markdown
@@ -169,6 +171,50 @@ def main(argv: list[str] | None = None) -> None:
 
                 if interrupted:
                     print_warning("Generation interrupted.")
+                continue
+
+            if result.copy_last:
+                last_msg = None
+                for msg in reversed(session.messages):
+                    if msg.get("role") == "assistant":
+                        last_msg = msg.get("content")
+                        break
+
+                if last_msg:
+                    try:
+                        import pyperclip
+
+                        pyperclip.copy(last_msg)
+                        print_system("Last response copied to clipboard.")
+                    except ImportError:
+                        try:
+                            if sys.platform == "darwin":
+                                subprocess.run(["pbcopy"], input=last_msg.encode("utf-8"), check=True)
+                                print_system("Last response copied to clipboard.")
+                            elif sys.platform.startswith("linux"):
+                                if shutil.which("wl-copy"):
+                                    subprocess.run(["wl-copy"], input=last_msg.encode("utf-8"), check=True)
+                                    print_system("Last response copied to clipboard.")
+                                elif shutil.which("xclip"):
+                                    subprocess.run(
+                                        ["xclip", "-selection", "clipboard", "-in"],
+                                        input=last_msg.encode("utf-8"),
+                                        check=True,
+                                    )
+                                    print_system("Last response copied to clipboard.")
+                                else:
+                                    print_warning(
+                                        "No clipboard tool found (install wl-clipboard, xclip, or pyperclip)."
+                                    )
+                            elif sys.platform == "win32":
+                                subprocess.run(["clip"], input=last_msg.encode("utf-16le"), check=True)
+                                print_system("Last response copied to clipboard.")
+                            else:
+                                print_warning("Clipboard copying not supported on this OS without pyperclip.")
+                        except Exception as e:
+                            print_error(f"Failed to copy to clipboard: {e}")
+                else:
+                    print_system("No assistant response to copy.")
                 continue
 
             if result.message:

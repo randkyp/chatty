@@ -40,6 +40,7 @@ body {
     max-width: 80ch;
     padding: 40px 20px 50vh 20px;
     box-sizing: border-box;
+    filter: grayscale(100%);
 }
 
 .resize-handle {

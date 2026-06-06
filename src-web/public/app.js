@@ -106,6 +106,12 @@ ws.onmessage = function(event) {
         }
     } else if (data.type === 'theme') {
         // Ignored, handled locally
+    } else if (data.type === 'copy_to_clipboard') {
+        navigator.clipboard.writeText(data.content).then(() => {
+            appendSystemMessage("Last response copied to clipboard.");
+        }).catch(err => {
+            appendSystemMessage(`Failed to copy: ${err}`, 'error');
+        });
     } else if (data.type === 'stream_start') {
         currentAssistantDiv = document.createElement('div');
         currentAssistantDiv.className = 'message assistant';
