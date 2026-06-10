@@ -9,17 +9,12 @@ gets passed through recursively into the API payload.
 from __future__ import annotations
 
 import argparse
-import copy
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-# Python 3.11+ has tomllib in stdlib; older versions need the backport.
-try:
-    import tomllib
-except ModuleNotFoundError:
-    import tomli as tomllib  # type: ignore[no-redef]
+import tomlkit
 
 # ── Default config template ────────────────────────────────────────────────
 
@@ -108,7 +103,7 @@ def _load_profile(raw: dict[str, Any], name: str) -> Profile:
 
 def load_profile_by_name(config_path: Path, name: str) -> tuple[Profile, dict[str, Any]]:
     """Load a profile from a config file by name. Returns (Profile, raw_toml)."""
-    raw = tomllib.loads(config_path.read_text())
+    raw = tomlkit.loads(config_path.read_text())
     return _load_profile(raw, name), raw
 
 
@@ -185,7 +180,7 @@ def load_config(argv: list[str] | None = None) -> AppConfig:
         else:
             config_path = _ensure_config(home_config_path)
 
-    raw = tomllib.loads(config_path.read_text())
+    raw = tomlkit.loads(config_path.read_text())
     profile = _load_profile(raw, args.profile)
 
     # CLI overrides take priority over TOML values.
@@ -207,77 +202,56 @@ def load_config(argv: list[str] | None = None) -> AppConfig:
 # ── Save back to TOML ────────────────────────────────────────────────────
 
 
-def _serialise_value(v: Any) -> str:
-    """Serialise a single Python value to a TOML literal."""
-    if isinstance(v, bool):
-        return "true" if v else "false"
-    if isinstance(v, int):
-        return str(v)
-    if isinstance(v, float):
-        return str(v)
-    if isinstance(v, str):
-        # Escape backslashes and quotes for TOML basic strings.
-        escaped = v.replace("\\", "\\\\").replace('"', '\\"')
-        return f'"{escaped}"'
-    if isinstance(v, dict):
-        # Inline table
-        inner = ", ".join(f"{k} = {_serialise_value(val)}" for k, val in v.items())
-        return f"{{{inner}}}"
-    if isinstance(v, list):
-        inner = ", ".join(_serialise_value(val) for val in v)
-        return f"[{inner}]"
-    return repr(v)
-
-
-def _write_toml_section(lines: list[str], header: str, data: dict[str, Any]) -> None:
-    """Append a TOML section with a [header] and key = value pairs."""
-    lines.append(f"[{header}]")
-    for k, v in data.items():
-        if isinstance(v, dict):
-            # Write nested dicts as sub-tables.
-            _write_toml_section(lines, f"{header}.{k}", v)
-        else:
-            lines.append(f"{k} = {_serialise_value(v)}")
-    lines.append("")
-
-
 def save_profile(cfg: AppConfig) -> None:
     """Write the active profile back to config.toml, preserving other profiles."""
-    raw = copy.deepcopy(cfg._raw)
+    doc = tomlkit.loads(cfg.config_path.read_text())
     p = cfg.profile
 
-    # Build the profile dict from runtime state.
-    prof_data: dict[str, Any] = {"base_url": p.base_url}
+    if "profile" not in doc:
+        doc["profile"] = tomlkit.table()
+
+    profiles = doc["profile"]
+    if p.name not in profiles:
+        profiles[p.name] = tomlkit.table()
+
+    p_table = profiles[p.name]
+    p_table["base_url"] = p.base_url
+
     if p.api_key is not None:
-        prof_data["api_key"] = p.api_key
+        p_table["api_key"] = p.api_key
+    elif "api_key" in p_table:
+        del p_table["api_key"]
+
     if p.model is not None:
-        prof_data["model"] = p.model
+        p_table["model"] = p.model
+    elif "model" in p_table:
+        del p_table["model"]
+
     if p.system_prompt is not None:
-        prof_data["system_prompt"] = p.system_prompt
+        p_table["system_prompt"] = p.system_prompt
+    elif "system_prompt" in p_table:
+        del p_table["system_prompt"]
+
     if p.ctx_size is not None:
-        prof_data["ctx_size"] = p.ctx_size
+        p_table["ctx_size"] = p.ctx_size
+    elif "ctx_size" in p_table:
+        del p_table["ctx_size"]
+
     if p.genmax is not None:
-        prof_data["genmax"] = p.genmax
+        p_table["genmax"] = p.genmax
+    elif "genmax" in p_table:
+        del p_table["genmax"]
+
     if p.samplers:
-        prof_data["samplers"] = p.samplers
+        if "samplers" not in p_table:
+            p_table["samplers"] = tomlkit.table()
+        s_table = p_table["samplers"]
+        for k, v in p.samplers.items():
+            s_table[k] = v
+        for k in list(s_table.keys()):
+            if k not in p.samplers:
+                del s_table[k]
+    elif "samplers" in p_table:
+        del p_table["samplers"]
 
-    raw.setdefault("profile", {})[p.name] = prof_data
-
-    # Re-serialise the entire config.
-    lines: list[str] = ["# Chatty configuration (auto-saved)", ""]
-    for profile_name, profile_data in raw.get("profile", {}).items():
-        flat: dict[str, Any] = {}
-        nested: dict[str, dict[str, Any]] = {}
-        for k, v in profile_data.items():
-            if isinstance(v, dict):
-                nested[k] = v
-            else:
-                flat[k] = v
-        lines.append(f"[profile.{profile_name}]")
-        for k, v in flat.items():
-            lines.append(f"{k} = {_serialise_value(v)}")
-        lines.append("")
-        for sub_name, sub_data in nested.items():
-            _write_toml_section(lines, f"profile.{profile_name}.{sub_name}", sub_data)
-
-    cfg.config_path.write_text("\n".join(lines) + "\n")
+    cfg.config_path.write_text(tomlkit.dumps(doc))

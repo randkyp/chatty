@@ -6,7 +6,6 @@ from chatty.config import (
     DEFAULT_CONFIG,
     _ensure_config,
     _load_profile,
-    _serialise_value,
     load_config,
     load_profile_by_name,
     parse_args,
@@ -131,19 +130,6 @@ system_prompt = "toml-sys"
     cfg = load_config(["-c", str(config_file.resolve()), "-m", "cli-model", "-s", "cli-sys"])
     assert cfg.profile.model == "cli-model"
     assert cfg.profile.system_prompt == "cli-sys"
-
-
-def test_serialise_value():
-    assert _serialise_value(True) == "true"
-    assert _serialise_value(False) == "false"
-    assert _serialise_value(123) == "123"
-    assert _serialise_value(1.25) == "1.25"
-    assert _serialise_value("hello") == '"hello"'
-    assert _serialise_value("back\\slash") == '"back\\\\slash"'
-    assert _serialise_value('qu"ote') == '"qu\\"ote"'
-    assert _serialise_value({"a": 1, "b": "yes"}) == '{a = 1, b = "yes"}'
-    assert _serialise_value([1, "two", False]) == '[1, "two", false]'
-    assert _serialise_value(object) == repr(object)
 
 
 def test_save_profile(tmp_path):
