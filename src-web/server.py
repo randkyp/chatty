@@ -157,10 +157,11 @@ async def websocket_endpoint(websocket: WebSocket):
 
                 payload_messages = session.build_payload_messages()
                 if payload_messages is None:
-                    budget = session.ctx_size - session.genmax
+                    budget = session.context_budget
+                    reserve = session.genmax if session.genmax > 0 else (session.ctx_size // 10)
                     msg = (
                         f"Message + system prompt exceeds context budget "
-                        f"({session.ctx_size} - {session.genmax} = {budget} tokens). "
+                        f"({session.ctx_size} - {reserve} = {budget} tokens). "
                         "Try /clear or /ctx to increase the limit."
                     )
                     await send_msg("warning", msg)

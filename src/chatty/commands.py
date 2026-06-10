@@ -218,7 +218,7 @@ def _cmd_system(arg: str, session: ChatSession, cfg: AppConfig) -> CommandResult
 
 def _cmd_ctx(arg: str, session: ChatSession) -> CommandResult:
     if not arg:
-        budget = session.ctx_size - session.genmax
+        budget = session.context_budget
         used = session.get_token_count()
         padding = session.get_padding_count()
         n_msgs = len(session.messages)

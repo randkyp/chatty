@@ -62,6 +62,14 @@ def test_token_counter_count_messages():
 # --- ChatSession Tests ---
 
 
+def test_chat_session_context_budget():
+    session = ChatSession(ctx_size=1000, genmax=0)
+    assert session.context_budget == 900
+
+    session = ChatSession(ctx_size=1000, genmax=200)
+    assert session.context_budget == 800
+
+
 def test_chat_session_append_simple():
     session = ChatSession()
     session.add_user_message("hello")

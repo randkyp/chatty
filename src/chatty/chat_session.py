@@ -122,6 +122,13 @@ class ChatSession:
     pending_images: list[dict[str, Any]] = field(default_factory=list)
     _counter: TokenCounter | None = field(default=None, repr=False)
 
+    @property
+    def context_budget(self) -> int:
+        """Return the effective context budget after reserving room for the response."""
+        if self.genmax <= 0:
+            return self.ctx_size - (self.ctx_size // 10)
+        return self.ctx_size - self.genmax
+
     def set_counter(self, counter: TokenCounter) -> None:
         self._counter = counter
 
@@ -206,7 +213,7 @@ class ChatSession:
         the budget (caller should show a warning).
         """
         assert self._counter is not None, "TokenCounter not set"
-        budget = self.ctx_size - self.genmax
+        budget = self.context_budget
 
         # Start with optional system message.
         prefix: list[dict[str, Any]] = []

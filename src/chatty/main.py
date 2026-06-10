@@ -240,9 +240,10 @@ def main(argv: list[str] | None = None) -> None:
 
         payload_messages = session.build_payload_messages()
         if payload_messages is None:
+            reserve = session.genmax if session.genmax > 0 else (session.ctx_size // 10)
             print_warning(
                 "Message + system prompt exceeds context budget "
-                f"({session.ctx_size} - {session.genmax} = {session.ctx_size - session.genmax} tokens). "
+                f"({session.ctx_size} - {reserve} = {session.context_budget} tokens). "
                 "Try /clear or /ctx to increase the limit."
             )
             # Remove the user message we just added since we can't send it.
@@ -335,7 +336,7 @@ def main(argv: list[str] | None = None) -> None:
         # Display token usage.
         token_count = session.get_token_count()
         if token_count >= 0:
-            budget = session.ctx_size - session.genmax
+            budget = session.context_budget
             print_system(f"[tokens: ~{token_count} / {budget} budget]")
 
 
