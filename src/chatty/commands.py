@@ -168,7 +168,7 @@ def handle_command(
         case "/profile":
             return _cmd_profile(arg, session, cfg)
 
-        case "/samplers" | "/sampelrs":
+        case "/samplers":
             return _cmd_samplers(arg, cfg, session)
 
         case "/image":
