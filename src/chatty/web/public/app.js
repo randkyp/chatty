@@ -10,6 +10,7 @@ const stopButton = document.getElementById('stop-button');
 
 let ws = null;
 let reconnectDelay = 500;            // ms, backs off to a cap
+let reconnectAttempts = 0;
 let manualClose = false;
 
 let currentAssistantDiv = null;
@@ -127,6 +128,7 @@ function connect() {
 
     ws.onopen = () => {
         reconnectDelay = 500;
+        reconnectAttempts = 0;
     };
 
     ws.onmessage = (event) => {
@@ -139,7 +141,14 @@ function connect() {
         setStreaming(false);
         stopThinking();
         if (manualClose) return;
-        appendSystemMessage(`Connection lost — reconnecting in ${(reconnectDelay / 1000).toFixed(1)}s…`, 'error');
+
+        if (reconnectAttempts >= 5) {
+            appendSystemMessage('Connection lost — maximum reconnect attempts reached. Please refresh the page.', 'error');
+            return;
+        }
+
+        reconnectAttempts++;
+        appendSystemMessage(`Connection lost — reconnecting in ${(reconnectDelay / 1000).toFixed(1)}s (attempt ${reconnectAttempts}/5)…`, 'error');
         setTimeout(connect, reconnectDelay);
         reconnectDelay = Math.min(reconnectDelay * 2, 10000);
     };
