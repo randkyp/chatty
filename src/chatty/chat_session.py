@@ -8,6 +8,7 @@ oldest user/assistant pairs until the history fits within ctx_size - genmax.
 
 from __future__ import annotations
 
+from collections import OrderedDict
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -24,7 +25,7 @@ class TokenCounter:
     base_url: str
     _use_server: bool | None = field(default=None, repr=False)
     _tiktoken_enc: Any = field(default=None, repr=False)
-    _cache: dict[str, int] = field(default_factory=dict, repr=False)
+    _cache: OrderedDict[tuple[bool | None, str], int] = field(default_factory=OrderedDict, repr=False)
 
     def _get_tiktoken(self) -> Any:
         if self._tiktoken_enc is None:
@@ -35,8 +36,10 @@ class TokenCounter:
         """Return token count for *text*."""
         if not text:
             return 0
-        if text in self._cache:
-            return self._cache[text]
+        cache_key = (self._use_server, text)
+        if cache_key in self._cache:
+            self._cache.move_to_end(cache_key)
+            return self._cache[cache_key]
 
         # First call: probe the server.
         if self._use_server is None:
@@ -50,7 +53,8 @@ class TokenCounter:
                     data = resp.json()
                     self._use_server = True
                     ans = len(data.get("tokens", []))
-                    self._cache[text] = ans
+                    self._cache[cache_key] = ans
+                    self._enforce_cache_size()
                     return ans
                 else:
                     self._use_server = False
@@ -66,15 +70,21 @@ class TokenCounter:
                 )
                 if resp.status_code == 200:
                     ans = len(resp.json().get("tokens", []))
-                    self._cache[text] = ans
+                    self._cache[cache_key] = ans
+                    self._enforce_cache_size()
                     return ans
             except (httpx.HTTPError, Exception):
                 pass
             # Fall through to tiktoken on transient failure.
 
         ans = len(self._get_tiktoken().encode(text))
-        self._cache[text] = ans
+        self._cache[cache_key] = ans
+        self._enforce_cache_size()
         return ans
+
+    def _enforce_cache_size(self) -> None:
+        while len(self._cache) > 1024:
+            self._cache.popitem(last=False)
 
     def count_messages(self, messages: list[dict[str, Any]]) -> int:
         """Approximate token count for a list of chat messages.
