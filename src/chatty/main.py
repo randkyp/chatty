@@ -137,12 +137,12 @@ def main(argv: list[str] | None = None) -> None:
                 if not interrupted:
                     try:
                         if cfg.raw_output:
-                            for chunk in stream_iter:
-                                if chunk.startswith("[error]"):
-                                    print_error(chunk)
+                            for event_type, content in stream_iter:
+                                if event_type == "error":
+                                    print_error(content)
                                     break
-                                print_assistant_chunk(chunk)
-                                collected.append(chunk)
+                                print_assistant_chunk(content)
+                                collected.append(content)
                         else:
                             term_h = shutil.get_terminal_size((80, 24)).lines
                             preview_lines = max(term_h // 2, 6)
@@ -155,11 +155,11 @@ def main(argv: list[str] | None = None) -> None:
                                 return Text("\n".join(lines), no_wrap=True, overflow="ellipsis")
 
                             with Live(_tail_e(""), console=console, refresh_per_second=8, transient=True) as live:
-                                for chunk in stream_iter:
-                                    if chunk.startswith("[error]"):
-                                        print_error(chunk)
+                                for event_type, content in stream_iter:
+                                    if event_type == "error":
+                                        print_error(content)
                                         break
-                                    collected.append(chunk)
+                                    collected.append(content)
                                     live.update(_tail_e("".join(collected)))
                     except KeyboardInterrupt:
                         interrupted = True
@@ -287,12 +287,12 @@ def main(argv: list[str] | None = None) -> None:
         if not interrupted:
             try:
                 if cfg.raw_output:
-                    for chunk in stream_iter:
-                        if chunk.startswith("[error]"):
-                            print_error(chunk)
+                    for event_type, content in stream_iter:
+                        if event_type == "error":
+                            print_error(content)
                             break
-                        print_assistant_chunk(chunk)
-                        collected.append(chunk)
+                        print_assistant_chunk(content)
+                        collected.append(content)
                 else:
                     term_h = shutil.get_terminal_size((80, 24)).lines
                     preview_lines = max(term_h // 2, 6)
@@ -306,11 +306,11 @@ def main(argv: list[str] | None = None) -> None:
                         return Text("\n".join(lines), no_wrap=True, overflow="ellipsis")
 
                     with Live(_tail(""), console=console, refresh_per_second=8, transient=True) as live:
-                        for chunk in stream_iter:
-                            if chunk.startswith("[error]"):
-                                print_error(chunk)
+                        for event_type, content in stream_iter:
+                            if event_type == "error":
+                                print_error(content)
                                 break
-                            collected.append(chunk)
+                            collected.append(content)
                             live.update(_tail("".join(collected)))
             except KeyboardInterrupt:
                 interrupted = True

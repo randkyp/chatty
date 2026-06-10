@@ -113,11 +113,11 @@ async def websocket_endpoint(websocket: WebSocket):
                                     genmax=session.genmax,
                                     debug=cfg.debug,
                                 )
-                                for chunk in stream:
-                                    if chunk.startswith("[error]"):
-                                        asyncio.run_coroutine_threadsafe(send_msg("error", chunk), loop)
+                                for event_type, content in stream:
+                                    if event_type == "error":
+                                        asyncio.run_coroutine_threadsafe(send_msg("error", content), loop)
                                         break
-                                    asyncio.run_coroutine_threadsafe(send_msg("stream_chunk", chunk), loop)
+                                    asyncio.run_coroutine_threadsafe(send_msg("stream_chunk", content), loop)
 
                                 asyncio.run_coroutine_threadsafe(send_msg("stream_end", ""), loop)
                             except Exception as e:
@@ -183,12 +183,12 @@ async def websocket_endpoint(websocket: WebSocket):
                             debug=cfg.debug,
                         )
                         collected = []
-                        for chunk in stream:
-                            if chunk.startswith("[error]"):
-                                asyncio.run_coroutine_threadsafe(send_msg("error", chunk), loop)
+                        for event_type, content in stream:
+                            if event_type == "error":
+                                asyncio.run_coroutine_threadsafe(send_msg("error", content), loop)
                                 break
-                            collected.append(chunk)
-                            asyncio.run_coroutine_threadsafe(send_msg("stream_chunk", chunk), loop)
+                            collected.append(content)
+                            asyncio.run_coroutine_threadsafe(send_msg("stream_chunk", content), loop)
 
                         full_response = "".join(collected)
                         if full_response:

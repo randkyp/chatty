@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Generator
-from typing import Any
+from typing import Any, Literal
 
 import httpx
 
@@ -71,11 +71,11 @@ def stream_chat(
     samplers: dict[str, Any],
     genmax: int,
     debug: bool = False,
-) -> Generator[str, None, None]:
-    """Stream a chat completion. Yields content delta strings.
+) -> Generator[tuple[Literal["delta", "error"], str], None, None]:
+    """Stream a chat completion. Yields structured events.
 
-    On connection/API errors, yields a single string starting with
-    "[error]" so the caller can display it.
+    On connection/API errors, yields a single event ("error", message)
+    so the caller can display it. Otherwise yields ("delta", text).
     """
     payload: dict[str, Any] = {
         "model": model,
@@ -105,7 +105,7 @@ def stream_chat(
                 if response.status_code != 200:
                     # Try to read an error body.
                     body = response.read().decode(errors="replace")
-                    yield f"[error] HTTP {response.status_code}: {body}"
+                    yield "error", f"HTTP {response.status_code}: {body}"
                     return
 
                 for line in response.iter_lines():
@@ -119,15 +119,15 @@ def stream_chat(
                             chunk = json.loads(data_str)
                             delta = chunk.get("choices", [{}])[0].get("delta", {}).get("content", "")
                             if delta:
-                                yield delta
+                                yield "delta", delta
                         except (json.JSONDecodeError, IndexError):
                             continue
     except httpx.ConnectError as e:
-        yield f"[error] Connection failed: {e}"
+        yield "error", f"Connection failed: {e}"
     except httpx.HTTPError as e:
-        yield f"[error] HTTP error: {e}"
+        yield "error", f"HTTP error: {e}"
     except Exception as e:
-        yield f"[error] Unexpected error: {e}"
+        yield "error", f"Unexpected error: {e}"
 
 
 def _auth_headers(api_key: str | None) -> dict[str, str]:

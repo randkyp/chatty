@@ -52,7 +52,7 @@ def test_stream_chat_success(respx_mock):
         )
     )
 
-    assert deltas == ["Hello", " world!"]
+    assert deltas == [("delta", "Hello"), ("delta", " world!")]
 
 
 def test_stream_chat_http_error(respx_mock):
@@ -65,7 +65,8 @@ def test_stream_chat_http_error(respx_mock):
     )
 
     assert len(deltas) == 1
-    assert "[error] HTTP 400: Bad Request" in deltas[0]
+    assert deltas[0][0] == "error"
+    assert "HTTP 400: Bad Request" in deltas[0][1]
 
 
 def test_stream_chat_connection_error(respx_mock):
@@ -80,4 +81,5 @@ def test_stream_chat_connection_error(respx_mock):
     )
 
     assert len(deltas) == 1
-    assert "[error] Connection failed:" in deltas[0]
+    assert deltas[0][0] == "error"
+    assert "Connection failed:" in deltas[0][1]
