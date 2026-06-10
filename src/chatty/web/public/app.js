@@ -30,7 +30,7 @@ const INPUT_KEY = 'chatty-input-history';
 
 // ── marked / KaTeX / DOMPurify setup ───────────────────────────────────────
 marked.setOptions({ breaks: true });
-marked.use(window.markedKatex({ throwOnError: false }));
+marked.use(window.markedKatex({ throwOnError: false, nonStandard: true }));
 const purifyConfig = {
     USE_PROFILES: { html: true, mathMl: true },
     ADD_ATTR: ['style', 'target', 'class'],
