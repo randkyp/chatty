@@ -1,6 +1,7 @@
 import sys
 
 import pytest
+
 from chatty.config import (
     DEFAULT_CONFIG,
     _ensure_config,

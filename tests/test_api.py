@@ -1,4 +1,5 @@
 import httpx
+
 from chatty.api import _auth_headers, fetch_model_metadata, stream_chat
 
 

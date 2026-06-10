@@ -4,6 +4,10 @@ import re
 import sys
 from pathlib import Path
 
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi.responses import HTMLResponse
+from fastapi.staticfiles import StaticFiles
+
 from chatty.api import stream_chat
 from chatty.chat_session import ChatSession, TokenCounter
 from chatty.commands import handle_command
@@ -12,9 +16,6 @@ from chatty.commands import handle_command
 from chatty.config import load_config
 from chatty.images import extract_images_from_text
 from chatty.main import _resolve_limits
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
-from fastapi.responses import HTMLResponse
-from fastapi.staticfiles import StaticFiles
 
 app = FastAPI()
 BASE_DIR = Path(__file__).parent

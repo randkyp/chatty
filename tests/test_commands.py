@@ -1,4 +1,5 @@
 import pytest
+
 from chatty.chat_session import ChatSession
 from chatty.commands import (
     _del_nested,

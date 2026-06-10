@@ -1,6 +1,7 @@
 from unittest.mock import MagicMock
 
 import httpx
+
 from chatty.chat_session import ChatSession, TokenCounter
 
 # --- TokenCounter Tests ---
