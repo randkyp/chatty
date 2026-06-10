@@ -185,7 +185,7 @@ def print_user(msg: str) -> None:
 
 def print_assistant_chunk(text: str) -> None:
     """Print a raw streaming chunk (no newline, immediate flush)."""
-    console.print(text, end="", highlight=False)
+    console.print(text, end="", highlight=False, markup=False)
 
 
 def print_assistant_done() -> None:
@@ -195,17 +195,17 @@ def print_assistant_done() -> None:
 
 def print_system(msg: str) -> None:
     """Print a system/informational message."""
-    console.print(f"[system_msg]{msg}[/]")
+    console.print(msg, style="system_msg", markup=False)
 
 
 def print_warning(msg: str) -> None:
     """Print a warning."""
-    console.print(f"[warning]⚠ {msg}[/]")
+    console.print(f"⚠ {msg}", style="warning", markup=False)
 
 
 def print_error(msg: str) -> None:
     """Print an error."""
-    console.print(f"[error]✗ {msg}[/]")
+    console.print(f"✗ {msg}", style="error", markup=False)
 
 
 def print_welcome(
