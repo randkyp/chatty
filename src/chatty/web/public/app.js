@@ -23,8 +23,6 @@ let streaming = false;
 
 const pendingImages = [];            // [{data_url, mime_type}]
 
-// Persisted display history of completed messages: [{role, text}].
-const STORE_KEY = 'chatty-chat-history';
 const THEME_KEY = 'chatty-theme';
 const INPUT_KEY = 'chatty-input-history';
 
@@ -54,15 +52,8 @@ function saveStore(key, value) {
     } catch { /* quota / private mode */ }
 }
 
-let displayLog = loadStore(STORE_KEY, []);
 let inputHistory = loadStore(INPUT_KEY, []);
 let inputHistoryIndex = inputHistory.length;
-
-function recordMessage(role, text) {
-    displayLog.push({ role, text });
-    if (displayLog.length > 200) displayLog = displayLog.slice(-200);
-    saveStore(STORE_KEY, displayLog);
-}
 
 // ── Theme (persisted) ───────────────────────────────────────────────────────
 function applyTheme(theme) {
@@ -102,13 +93,7 @@ function appendAssistantMessage(markdownText) {
     history.appendChild(div);
 }
 
-// Restore prior display history on load (display-only; the server starts a
-// fresh session per connection).
-for (const m of displayLog) {
-    if (m.role === 'user') appendUserMessage(m.text);
-    else if (m.role === 'assistant') appendAssistantMessage(m.text);
-    else appendSystemMessage(m.text, m.role);
-}
+
 
 function setStreaming(on) {
     streaming = on;
@@ -216,7 +201,6 @@ function handleServerMessage(data) {
                     currentAssistantDiv.remove();
                 } else {
                     currentAssistantDiv.innerHTML = renderMarkdown(currentAssistantContent);
-                    recordMessage('assistant', currentAssistantContent);
                 }
             }
             currentAssistantDiv = null;
@@ -245,7 +229,6 @@ function sendMessage() {
 
     if (text) {
         appendUserMessage(text);
-        recordMessage('user', text);
         inputHistory.push(text);
         if (inputHistory.length > 200) inputHistory = inputHistory.slice(-200);
         saveStore(INPUT_KEY, inputHistory);
