@@ -93,6 +93,44 @@ def get_clipboard_image() -> bytes | None:
         return _get_clipboard_image_macos()
     elif sys.platform.startswith("linux"):
         return _get_clipboard_image_linux()
+    elif sys.platform == "win32":
+        return _get_clipboard_image_windows()
+    return None
+
+
+def _get_clipboard_image_windows() -> bytes | None:
+    """Extract a PNG image from the Windows clipboard via PowerShell + WinForms."""
+    temp_file = Path(tempfile.gettempdir()) / "chatty_clipboard.png"
+    if temp_file.exists():
+        try:
+            temp_file.unlink()
+        except OSError:
+            pass
+
+    # Use System.Windows.Forms.Clipboard to pull a bitmap and save it as PNG.
+    script = (
+        "Add-Type -AssemblyName System.Windows.Forms,System.Drawing; "
+        "$img = [System.Windows.Forms.Clipboard]::GetImage(); "
+        "if ($img -ne $null) { "
+        f"$img.Save('{temp_file}', [System.Drawing.Imaging.ImageFormat]::Png); "
+        "Write-Output 'PNG' } else { Write-Output 'NONE' }"
+    )
+    try:
+        proc = subprocess.run(
+            ["powershell", "-NoProfile", "-NonInteractive", "-Command", script],
+            capture_output=True,
+            text=True,
+            timeout=10.0,
+        )
+        if "PNG" in proc.stdout and temp_file.exists():
+            data = temp_file.read_bytes()
+            try:
+                temp_file.unlink()
+            except OSError:
+                pass
+            return data
+    except (OSError, subprocess.SubprocessError):
+        pass
     return None
 
 

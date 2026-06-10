@@ -1,9 +1,8 @@
-import sys
-
 import pytest
 
 from chatty.config import (
     DEFAULT_CONFIG,
+    ProfileNotFoundError,
     _ensure_config,
     _load_profile,
     load_config,
@@ -50,37 +49,17 @@ def test_load_profile_success():
     assert profile.samplers == {"temperature": 0.5}
 
 
-def test_load_profile_missing_base_url(monkeypatch):
+def test_load_profile_missing_base_url():
     raw_toml = {"profile": {"default": {"api_key": "testkey"}}}
-    # _load_profile calls sys.exit(1) on failure.
-    exit_called = False
-
-    def mock_exit(code):
-        nonlocal exit_called
-        exit_called = True
-        raise SystemExit(code)
-
-    monkeypatch.setattr(sys, "exit", mock_exit)
-
-    with pytest.raises(SystemExit):
+    with pytest.raises(ProfileNotFoundError, match="missing required field 'base_url'"):
         _load_profile(raw_toml, "default")
-    assert exit_called
 
 
-def test_load_profile_missing_profile(monkeypatch):
-    raw_toml = {"profile": {}}
-    exit_called = False
-
-    def mock_exit(code):
-        nonlocal exit_called
-        exit_called = True
-        raise SystemExit(code)
-
-    monkeypatch.setattr(sys, "exit", mock_exit)
-
-    with pytest.raises(SystemExit):
+def test_load_profile_missing_profile():
+    raw_toml = {"profile": {"good": {"base_url": "http://x"}}}
+    with pytest.raises(ProfileNotFoundError) as excinfo:
         _load_profile(raw_toml, "nonexistent")
-    assert exit_called
+    assert excinfo.value.available == ["good"]
 
 
 def test_load_profile_by_name(tmp_path):
@@ -157,3 +136,56 @@ base_url = "http://localhost:9000"
     # Check that other profile is preserved
     other_profile, _ = load_profile_by_name(config_file, "other")
     assert other_profile.base_url == "http://localhost:9000"
+
+
+# --- switch_profile / resolve_limits / save_profile None-sampler skip ---
+
+
+def test_switch_profile(tmp_path):
+    from chatty.config import AppConfig, Profile
+
+    cfg_path = tmp_path / "config.toml"
+    cfg_path.write_text(
+        '[profile.a]\nbase_url = "http://a"\nmodel = "ma"\n[profile.b]\nbase_url = "http://b"\nmodel = "mb"\n'
+    )
+    cfg = AppConfig(config_path=cfg_path, profile=Profile(name="a", base_url="http://a"))
+    cfg.switch_profile("b")
+    assert cfg.profile.name == "b"
+    assert cfg.profile.model == "mb"
+    assert cfg._raw["profile"]["b"]["base_url"] == "http://b"
+
+
+def test_switch_profile_missing_raises(tmp_path):
+    from chatty.config import AppConfig, Profile
+
+    cfg_path = tmp_path / "config.toml"
+    cfg_path.write_text('[profile.a]\nbase_url = "http://a"\n')
+    cfg = AppConfig(config_path=cfg_path, profile=Profile(name="a", base_url="http://a"))
+    with pytest.raises(ProfileNotFoundError):
+        cfg.switch_profile("nope")
+
+
+def test_resolve_limits_uses_metadata(respx_mock):
+    from chatty.config import AppConfig, Profile, resolve_limits
+
+    respx_mock.get("http://up/v1/models").respond(
+        200, json={"data": [{"id": "m1", "context_length": 4096, "max_tokens": 512}]}
+    )
+    cfg = AppConfig(config_path=None, profile=Profile(name="p", base_url="http://up"))
+    resolve_limits(cfg)
+    assert cfg.profile.ctx_size == 4096
+    assert cfg.profile.genmax == 512
+    assert cfg.profile.model == "m1"
+
+
+def test_save_profile_skips_none_sampler(tmp_path):
+    from chatty.config import AppConfig, Profile
+
+    cfg_path = tmp_path / "config.toml"
+    cfg_path.write_text('[profile.default]\nbase_url = "http://x"\n')
+    p = Profile(name="default", base_url="http://x", samplers={"temperature": 0.7, "stop": None})
+    cfg = AppConfig(config_path=cfg_path, profile=p)
+    save_profile(cfg)  # must not raise on the None value
+    text = cfg_path.read_text()
+    assert "temperature" in text
+    assert "stop" not in text

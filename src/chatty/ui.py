@@ -12,12 +12,23 @@ With --enter-sends / -e: Enter sends immediately; Shift+Enter
 
 from __future__ import annotations
 
+import re
+from typing import TYPE_CHECKING
+
+import tomlkit
 from prompt_toolkit import PromptSession
+from prompt_toolkit.completion import Completer, Completion, PathCompleter
+from prompt_toolkit.document import Document
 from prompt_toolkit.formatted_text import HTML
 from prompt_toolkit.key_binding import KeyBindings
 from prompt_toolkit.keys import Keys
 from rich.console import Console
 from rich.theme import Theme
+
+if TYPE_CHECKING:
+    from collections.abc import Iterable
+
+    from chatty.config import AppConfig
 
 # ── Rich console setup ─────────────────────────────────────────────────────
 
@@ -78,11 +89,72 @@ def _build_key_bindings(enter_sends: bool = False) -> KeyBindings:
     return kb
 
 
-def create_prompt_session(enter_sends: bool = False) -> PromptSession:
+class ChattyCompleter(Completer):
+    """Tab completion for slash commands, profile/model names, and @paths."""
+
+    def __init__(self, cfg: AppConfig) -> None:
+        self.cfg = cfg
+        self._path_completer = PathCompleter(expanduser=True)
+        self._model_cache: list[str] | None = None
+
+    def _profile_names(self) -> list[str]:
+        try:
+            raw = tomlkit.loads(self.cfg.config_path.read_text())
+            return list(raw.get("profile", {}).keys())
+        except (OSError, tomlkit.exceptions.TOMLKitError):
+            return []
+
+    def _model_names(self) -> list[str]:
+        if self._model_cache is None:
+            from chatty.api import list_models
+
+            self._model_cache = list_models(self.cfg.profile.base_url, self.cfg.profile.api_key)
+        return self._model_cache
+
+    def _word_completions(self, options: Iterable[str], word: str) -> Iterable[Completion]:
+        for opt in options:
+            if opt.startswith(word):
+                yield Completion(opt, start_position=-len(word))
+
+    def get_completions(self, document: Document, complete_event):  # type: ignore[no-untyped-def]
+        text = document.text_before_cursor
+
+        # @path completion: complete the fragment after the last unspaced '@'.
+        at = text.rfind("@")
+        if at != -1:
+            fragment = text[at + 1 :]
+            if not re.search(r"\s", fragment):
+                sub_doc = Document(fragment, len(fragment))
+                yield from self._path_completer.get_completions(sub_doc, complete_event)
+                return
+
+        # Command name (whole input is a single slash-word being typed).
+        if re.fullmatch(r"/[a-zA-Z]*", text):
+            from chatty.commands import COMMANDS
+
+            yield from self._word_completions(COMMANDS, text)
+            return
+
+        # /profile <name>
+        m = re.fullmatch(r"/profile\s+(\S*)", text)
+        if m:
+            yield from self._word_completions(self._profile_names(), m.group(1))
+            return
+
+        # /models <name>
+        m = re.fullmatch(r"/models\s+(\S*)", text)
+        if m:
+            yield from self._word_completions(self._model_names(), m.group(1))
+            return
+
+
+def create_prompt_session(enter_sends: bool = False, completer: Completer | None = None) -> PromptSession:
     """Build a PromptSession with multiline input and custom key bindings."""
     return PromptSession(
         key_bindings=_build_key_bindings(enter_sends),
         multiline=True,
+        completer=completer,
+        complete_while_typing=False,  # Tab-triggered; avoids per-keystroke model fetches.
         prompt_continuation=lambda width, line_number, wrap_count: "… ",
         erase_when_done=True,
     )

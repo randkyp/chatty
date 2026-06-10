@@ -179,3 +179,40 @@ textarea {
     outline: none;
     overflow: hidden;
 }
+
+/* Stop button: appears only while a response is generating. */
+#stop-button {
+    margin-left: 1ch;
+    align-self: flex-start;
+    background: transparent;
+    border: 1px solid var(--accent);
+    color: var(--fg);
+    font-family: inherit;
+    font-size: 0.75em;
+    padding: 0.1em 0.6em;
+    cursor: pointer;
+    border-radius: 3px;
+    white-space: nowrap;
+}
+
+#stop-button:hover {
+    border-color: var(--fg);
+}
+
+/* Pending image attachment chips, shown above the input row. */
+#image-chips {
+    display: none;
+    flex-wrap: wrap;
+    gap: 0.5ch;
+    margin-top: 1em;
+}
+
+.image-chip {
+    border: 1px dashed var(--accent);
+    color: var(--fg-user);
+    font-size: 0.75em;
+    padding: 0.1em 0.6em;
+    border-radius: 3px;
+    cursor: pointer;
+    user-select: none;
+}

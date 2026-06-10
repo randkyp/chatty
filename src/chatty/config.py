@@ -9,12 +9,22 @@ gets passed through recursively into the API payload.
 from __future__ import annotations
 
 import argparse
-import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
 import tomlkit
+
+from chatty.api import fetch_model_metadata
+
+
+class ProfileNotFoundError(Exception):
+    """Raised when a requested profile is missing or malformed in the config."""
+
+    def __init__(self, message: str, available: list[str] | None = None) -> None:
+        super().__init__(message)
+        self.available = available or []
+
 
 # ── Default config template ────────────────────────────────────────────────
 
@@ -63,8 +73,18 @@ class AppConfig:
     debug: bool = False
     enter_sends: bool = False
     raw_output: bool = False
+    autosave: bool = False
     # Stores the raw parsed TOML so we can write back on /save.
     _raw: dict[str, Any] = field(default_factory=dict, repr=False)
+
+    def switch_profile(self, name: str) -> None:
+        """Load *name* from this config's file and make it the active profile.
+
+        Raises ProfileNotFoundError if the profile is missing or malformed.
+        """
+        profile, raw = load_profile_by_name(self.config_path, name)
+        self.profile = profile
+        self._raw = raw
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────
@@ -82,13 +102,15 @@ def _load_profile(raw: dict[str, Any], name: str) -> Profile:
     """Extract a Profile from parsed TOML data."""
     profiles = raw.get("profile", {})
     if name not in profiles:
-        available = ", ".join(profiles.keys()) or "(none)"
-        print(f"[error] Profile '{name}' not found. Available: {available}")
-        sys.exit(1)
+        available = list(profiles.keys())
+        avail_str = ", ".join(available) or "(none)"
+        raise ProfileNotFoundError(
+            f"Profile '{name}' not found. Available: {avail_str}",
+            available=available,
+        )
     data = profiles[name]
     if "base_url" not in data:
-        print(f"[error] Profile '{name}' is missing required field 'base_url'.")
-        sys.exit(1)
+        raise ProfileNotFoundError(f"Profile '{name}' is missing required field 'base_url'.")
     return Profile(
         name=name,
         base_url=data["base_url"].rstrip("/"),
@@ -156,6 +178,27 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         action="store_true",
         help="Raw streaming output (no Markdown rendering).",
     )
+    parser.add_argument(
+        "--autosave",
+        action="store_true",
+        help="Autosave the session to ~/.config/chatty/session.json on exit.",
+    )
+    parser.add_argument(
+        "--web",
+        action="store_true",
+        help="Launch the web UI server instead of the CLI.",
+    )
+    parser.add_argument(
+        "--host",
+        default="127.0.0.1",
+        help="Host for the web server (with --web; default: 127.0.0.1).",
+    )
+    parser.add_argument(
+        "--port",
+        type=int,
+        default=8000,
+        help="Port for the web server (with --web; default: 8000).",
+    )
     return parser.parse_args(argv)
 
 
@@ -195,8 +238,25 @@ def load_config(argv: list[str] | None = None) -> AppConfig:
         debug=args.debug,
         enter_sends=args.enter_sends,
         raw_output=args.raw,
+        autosave=args.autosave,
         _raw=raw,
     )
+
+
+def resolve_limits(cfg: AppConfig) -> None:
+    """Fill in ctx_size / genmax / model from server metadata if not set in profile."""
+    p = cfg.profile
+    if p.ctx_size and p.genmax and p.model:
+        return  # Everything already set, skip network call.
+
+    meta = fetch_model_metadata(p.base_url, p.api_key)
+
+    if p.ctx_size is None:
+        p.ctx_size = meta.get("ctx_size", 8192)
+    if p.genmax is None:
+        p.genmax = meta.get("genmax", 0)
+    if not p.model:
+        p.model = meta.get("model_id", "default")
 
 
 # ── Save back to TOML ────────────────────────────────────────────────────
@@ -242,14 +302,17 @@ def save_profile(cfg: AppConfig) -> None:
     elif "genmax" in p_table:
         del p_table["genmax"]
 
-    if p.samplers:
+    # TOML has no null type, so drop None-valued samplers rather than emitting
+    # invalid TOML (the old _serialise_value repr() fallback could do exactly that).
+    writable_samplers = {k: v for k, v in p.samplers.items() if v is not None}
+    if writable_samplers:
         if "samplers" not in p_table:
             p_table["samplers"] = tomlkit.table()
         s_table = p_table["samplers"]
-        for k, v in p.samplers.items():
+        for k, v in writable_samplers.items():
             s_table[k] = v
         for k in list(s_table.keys()):
-            if k not in p.samplers:
+            if k not in writable_samplers:
                 del s_table[k]
     elif "samplers" in p_table:
         del p_table["samplers"]

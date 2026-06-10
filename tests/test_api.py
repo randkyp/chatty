@@ -83,3 +83,31 @@ def test_stream_chat_connection_error(respx_mock):
     assert len(deltas) == 1
     assert deltas[0][0] == "error"
     assert "Connection failed:" in deltas[0][1]
+
+
+def test_stream_chat_emits_usage(respx_mock):
+    from chatty.api import stream_chat
+
+    body = (
+        'data: {"choices": [{"delta": {"content": "Hi"}}]}\n\n'
+        'data: {"choices": [], "usage": {"prompt_tokens": 3, "completion_tokens": 1, "total_tokens": 4}}\n\n'
+        "data: [DONE]\n"
+    )
+    respx_mock.post("http://up/v1/chat/completions").respond(
+        200, text=body, headers={"content-type": "text/event-stream"}
+    )
+    events = list(stream_chat("http://up", None, "m", [{"role": "user", "content": "x"}], {}, 0))
+    assert ("delta", "Hi") in events
+    assert any(et == "usage" for et, _ in events)
+
+
+def test_get_client_is_reused():
+    from chatty.api import close_clients, get_client
+
+    close_clients()
+    c1 = get_client("http://up", None)
+    c2 = get_client("http://up", None)
+    assert c1 is c2
+    c3 = get_client("http://other", "key")
+    assert c3 is not c1
+    close_clients()

@@ -28,3 +28,7 @@ config.toml
 # OS
 .DS_Store
 Thumbs.db
+
+# Coverage
+.coverage
+htmlcov/

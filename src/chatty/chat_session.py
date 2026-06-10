@@ -8,12 +8,15 @@ oldest user/assistant pairs until the history fits within ctx_size - genmax.
 
 from __future__ import annotations
 
+import json
 from collections import OrderedDict
 from dataclasses import dataclass, field
 from typing import Any
 
 import httpx
 import tiktoken
+
+from chatty.api import get_client
 
 # ── Token counting ─────────────────────────────────────────────────────────
 
@@ -32,6 +35,14 @@ class TokenCounter:
             self._tiktoken_enc = tiktoken.get_encoding("cl100k_base")
         return self._tiktoken_enc
 
+    def _post_tokenize(self, text: str) -> httpx.Response:
+        """POST to the server's /tokenize endpoint, reusing a pooled client."""
+        return get_client(self.base_url, None).post(
+            f"{self.base_url}/tokenize",
+            json={"content": text},
+            timeout=5.0,
+        )
+
     def count(self, text: str) -> int:
         """Return token count for *text*."""
         if not text:
@@ -44,11 +55,7 @@ class TokenCounter:
         # First call: probe the server.
         if self._use_server is None:
             try:
-                resp = httpx.post(
-                    f"{self.base_url}/tokenize",
-                    json={"content": text},
-                    timeout=5.0,
-                )
+                resp = self._post_tokenize(text)
                 if resp.status_code == 200:
                     data = resp.json()
                     self._use_server = True
@@ -58,22 +65,18 @@ class TokenCounter:
                     return ans
                 else:
                     self._use_server = False
-            except (httpx.HTTPError, Exception):
+            except (httpx.HTTPError, json.JSONDecodeError):
                 self._use_server = False
 
         if self._use_server:
             try:
-                resp = httpx.post(
-                    f"{self.base_url}/tokenize",
-                    json={"content": text},
-                    timeout=5.0,
-                )
+                resp = self._post_tokenize(text)
                 if resp.status_code == 200:
                     ans = len(resp.json().get("tokens", []))
                     self._cache[cache_key] = ans
                     self._enforce_cache_size()
                     return ans
-            except (httpx.HTTPError, Exception):
+            except (httpx.HTTPError, json.JSONDecodeError):
                 pass
             # Fall through to tiktoken on transient failure.
 
@@ -121,6 +124,8 @@ class ChatSession:
     messages: list[dict[str, Any]] = field(default_factory=list)
     pending_images: list[dict[str, Any]] = field(default_factory=list)
     _counter: TokenCounter | None = field(default=None, repr=False)
+    # Revert token for the most recent add_user_message (merged?, original_content).
+    _last_user_add: tuple[bool, Any] | None = field(default=None, repr=False)
 
     @property
     def context_budget(self) -> int:
@@ -135,16 +140,43 @@ class ChatSession:
     # ── History manipulation ───────────────────────────────────────────────
 
     def add_user_message(self, content: str, images: list[dict[str, Any]] | None = None) -> None:
-        self._append("user", content, images)
+        # Record exactly how this add mutated history so it can be reverted
+        # precisely (a plain undo() would discard earlier merged-in user text).
+        self._last_user_add = self._append("user", content, images)
 
     def add_assistant_message(self, content: str) -> None:
         self._append("assistant", content)
+        self._last_user_add = None
 
-    def _append(self, role: str, content: str, images: list[dict[str, Any]] | None = None) -> None:
-        """Append a message, concatenating if the previous has the same role."""
+    def revert_last_user_message(self) -> None:
+        """Revert exactly the most recent add_user_message (merge-aware).
+
+        Used when a send fails before any assistant text arrives. Unlike undo(),
+        this restores merged-in earlier user content instead of dropping it.
+        """
+        token = self._last_user_add
+        self._last_user_add = None
+        if token is None:
+            return
+        merged, original = token
+        if merged:
+            if self.messages:
+                self.messages[-1]["content"] = original
+        elif self.messages:
+            self.messages.pop()
+
+    def _append(self, role: str, content: str, images: list[dict[str, Any]] | None = None) -> tuple[bool, Any]:
+        """Append a message, concatenating if the previous has the same role.
+
+        Returns (merged, original_content): *merged* is True when the message was
+        folded into the previous same-role message, and *original_content* is that
+        message's content from before the merge (for precise reverting).
+        """
         if self.messages and self.messages[-1]["role"] == role:
             prev_msg = self.messages[-1]
             prev_content = prev_msg["content"]
+            # prev_content is never mutated in place below (we always rebind
+            # prev_msg["content"]), so it is safe to keep as the revert original.
 
             # Concatenate content.
             if isinstance(prev_content, str) and not images:
@@ -170,6 +202,7 @@ class ChatSession:
                         )
 
                 prev_msg["content"] = parts
+            return True, prev_content
         else:
             if images:
                 parts: list[dict[str, Any]] = []
@@ -185,6 +218,26 @@ class ChatSession:
                 self.messages.append({"role": role, "content": parts})
             else:
                 self.messages.append({"role": role, "content": content})
+            return False, None
+
+    def stage_user_message(
+        self, text: str, extra_images: list[dict[str, Any]] | None = None
+    ) -> tuple[list[dict[str, Any]] | None, list[dict[str, Any]]]:
+        """Prepare a user turn: extract @image paths, attach pending/extra images,
+        append the message, and build the clipped API payload.
+
+        Returns (payload, attached_images). *payload* is None when the message
+        busts the context budget; the caller should warn and then call
+        revert_last_user_message(). Shared by the CLI and web server.
+        """
+        from chatty.images import extract_images_from_text
+
+        text, text_images = extract_images_from_text(text)
+        attached = list(self.pending_images) + text_images + list(extra_images or [])
+        self.add_user_message(text, images=attached)
+        self.pending_images.clear()
+        payload = self.build_payload_messages()
+        return payload, attached
 
     def clear(self) -> None:
         """Clear user/assistant history (system prompt is re-injected at send time)."""

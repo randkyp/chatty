@@ -8,18 +8,38 @@ a signal to quit, or None (handled internally).
 from __future__ import annotations
 
 import json
+import os
 import re
+import shlex
+import subprocess
+import sys
+import tempfile
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
 from rich.console import Console
 
 from chatty.chat_session import ChatSession
-from chatty.config import AppConfig, load_profile_by_name, save_profile
+from chatty.config import AppConfig, ProfileNotFoundError, save_profile
 from chatty.images import encode_image, encode_image_file, get_clipboard_image
 
 console = Console()
+
+_COMMAND_RE = re.compile(r"^/[a-zA-Z]+$")
+
+
+def is_command(text: str) -> bool:
+    """Return True if *text* should be dispatched as a slash command.
+
+    A command is a single leading-slash token of letters (e.g. ``/clear``).
+    ``//foo`` is an escaped literal, not a command.
+    """
+    if not text.startswith("/") or text.startswith("//"):
+        return False
+    first_word = text.split(None, 1)[0] if text else ""
+    return bool(_COMMAND_RE.match(first_word))
 
 
 @dataclass
@@ -30,6 +50,8 @@ class CommandResult:
     message: str | None = None
     ephemeral_prompt: str | None = None
     copy_last: bool = False
+    # Resend the current last user message (used by /retry, /regen, /edit).
+    resend_user: bool = False
 
 
 # ── Sampler helpers ────────────────────────────────────────────────────────
@@ -102,6 +124,33 @@ def _sanitize_path_arg(arg: str) -> tuple[Path, bool]:
 
 # ── Command dispatch ──────────────────────────────────────────────────────
 
+# Canonical command names (used by dispatch and by the tab completer).
+# "/sampelrs" is a deliberate alias for the common typo.
+COMMANDS: list[str] = [
+    "/quit",
+    "/exit",
+    "/clear",
+    "/undo",
+    "/system",
+    "/ctx",
+    "/genmax",
+    "/profile",
+    "/samplers",
+    "/sampelrs",
+    "/save",
+    "/load",
+    "/image",
+    "/list",
+    "/help",
+    "/models",
+    "/btw",
+    "/copy",
+    "/retry",
+    "/regen",
+    "/edit",
+    "/sessions",
+]
+
 
 def handle_command(
     raw_input: str,
@@ -114,28 +163,7 @@ def handle_command(
     cmd = parts[0].lower()
     arg = parts[1] if len(parts) > 1 else ""
 
-    available_commands = [
-        "/quit",
-        "/exit",
-        "/clear",
-        "/undo",
-        "/system",
-        "/ctx",
-        "/genmax",
-        "/profile",
-        "/samplers",
-        "/sampelrs",
-        "/save",
-        "/load",
-        "/image",
-        "/list",
-        "/help",
-        "/models",
-        "/btw",
-        "/copy",
-    ]
-
-    matches = [c for c in available_commands if c.startswith(cmd)]
+    matches = [c for c in COMMANDS if c.startswith(cmd)]
     if len(matches) == 1:
         cmd = matches[0]
     elif len(matches) > 1:
@@ -160,7 +188,7 @@ def handle_command(
             return _cmd_system(arg, session, cfg)
 
         case "/ctx":
-            return _cmd_ctx(arg, session)
+            return _cmd_ctx(arg, session, cfg)
 
         case "/genmax":
             return _cmd_genmax(arg, session, cfg)
@@ -195,6 +223,15 @@ def handle_command(
         case "/copy":
             return CommandResult(copy_last=True)
 
+        case "/retry" | "/regen":
+            return _cmd_retry(session)
+
+        case "/edit":
+            return _cmd_edit(session)
+
+        case "/sessions":
+            return _cmd_sessions()
+
         case _:
             return CommandResult(message=f"Unknown command: {cmd}")
 
@@ -216,7 +253,7 @@ def _cmd_system(arg: str, session: ChatSession, cfg: AppConfig) -> CommandResult
     return CommandResult(message="System prompt updated.")
 
 
-def _cmd_ctx(arg: str, session: ChatSession) -> CommandResult:
+def _cmd_ctx(arg: str, session: ChatSession, cfg: AppConfig) -> CommandResult:
     if not arg:
         budget = session.context_budget
         used = session.get_token_count()
@@ -238,6 +275,9 @@ def _cmd_ctx(arg: str, session: ChatSession) -> CommandResult:
     try:
         val = int(arg)
         session.ctx_size = val
+        # Persist to the active profile so /samplers save records it, matching
+        # /genmax's behaviour (previously /ctx only updated the live session).
+        cfg.profile.ctx_size = val
         return CommandResult(message=f"Context size set to {val}.")
     except ValueError:
         return CommandResult(message="Usage: /ctx <integer>")
@@ -260,17 +300,16 @@ def _cmd_profile(arg: str, session: ChatSession, cfg: AppConfig) -> CommandResul
     if not arg:
         return CommandResult(message=f"Active profile: {cfg.profile.name}")
     try:
-        new_profile, raw = load_profile_by_name(cfg.config_path, arg)
-        cfg.profile = new_profile
-        cfg._raw = raw
-        session.system_prompt = new_profile.system_prompt
-        if new_profile.ctx_size is not None:
-            session.ctx_size = new_profile.ctx_size
-        if new_profile.genmax is not None:
-            session.genmax = new_profile.genmax
-        return CommandResult(message=f"Switched to profile '{arg}'.")
-    except SystemExit:
-        return CommandResult(message=f"Profile '{arg}' not found.")
+        cfg.switch_profile(arg)
+    except ProfileNotFoundError as e:
+        return CommandResult(message=str(e))
+    new_profile = cfg.profile
+    session.system_prompt = new_profile.system_prompt
+    if new_profile.ctx_size is not None:
+        session.ctx_size = new_profile.ctx_size
+    if new_profile.genmax is not None:
+        session.genmax = new_profile.genmax
+    return CommandResult(message=f"Switched to profile '{arg}'.")
 
 
 def _cmd_samplers(arg: str, cfg: AppConfig, session: ChatSession) -> CommandResult:
@@ -335,34 +374,31 @@ def _cmd_save_session(arg: str, session: ChatSession, cfg: AppConfig) -> Command
         else:
             resolved_path = json_path
 
-    use_jsonl = resolved_path.suffix == ".jsonl"
-
     try:
-        resolved_path.parent.mkdir(parents=True, exist_ok=True)
-
-        if use_jsonl:
-            with open(resolved_path, "w", encoding="utf-8") as f:
-                metadata = {
-                    "system_prompt": session.system_prompt,
-                    "ctx_size": session.ctx_size,
-                    "genmax": session.genmax,
-                }
-                f.write(json.dumps(metadata, ensure_ascii=False) + "\n")
-                for msg in session.messages:
-                    f.write(json.dumps(msg, ensure_ascii=False) + "\n")
-        else:
-            data = {
-                "system_prompt": session.system_prompt,
-                "ctx_size": session.ctx_size,
-                "genmax": session.genmax,
-                "messages": session.messages,
-            }
-            with open(resolved_path, "w", encoding="utf-8") as f:
-                json.dump(data, f, indent=2, ensure_ascii=False)
-
+        save_session(session, resolved_path)
         return CommandResult(message=f"Session saved to {resolved_path}.")
-    except Exception as e:
+    except OSError as e:
         return CommandResult(message=f"Failed to save session: {e}")
+
+
+def save_session(session: ChatSession, path: Path) -> None:
+    """Write *session* to *path* as .json or .jsonl. Reused by autosave."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    metadata = {
+        "system_prompt": session.system_prompt,
+        "ctx_size": session.ctx_size,
+        "genmax": session.genmax,
+        "saved_at": datetime.now().isoformat(timespec="seconds"),
+    }
+    if path.suffix == ".jsonl":
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(json.dumps(metadata, ensure_ascii=False) + "\n")
+            for msg in session.messages:
+                f.write(json.dumps(msg, ensure_ascii=False) + "\n")
+    else:
+        data = {**metadata, "messages": session.messages}
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2, ensure_ascii=False)
 
 
 def _cmd_load_session(arg: str, session: ChatSession, cfg: AppConfig) -> CommandResult:
@@ -611,12 +647,112 @@ def _cmd_btw(arg: str) -> CommandResult:
     return CommandResult(ephemeral_prompt=arg)
 
 
+def _message_text(content: Any) -> str:
+    """Extract the plain-text portion of a message's content."""
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        return "".join(p.get("text", "") for p in content if p.get("type") == "text")
+    return ""
+
+
+def _set_message_text(msg: dict[str, Any], text: str) -> None:
+    """Replace the text of a message, preserving any attached images."""
+    content = msg.get("content")
+    if isinstance(content, list):
+        images = [p for p in content if p.get("type") != "text"]
+        msg["content"] = [{"type": "text", "text": text}, *images]
+    else:
+        msg["content"] = text
+
+
+def _cmd_retry(session: ChatSession) -> CommandResult:
+    """Drop the last assistant reply and resend the preceding user message."""
+    if session.messages and session.messages[-1]["role"] == "assistant":
+        session.messages.pop()
+    if not session.messages or session.messages[-1]["role"] != "user":
+        return CommandResult(message="Nothing to retry.")
+    return CommandResult(resend_user=True)
+
+
+def _edit_in_editor(initial: str) -> str | None:
+    """Open $EDITOR on *initial* text and return the edited result (or None)."""
+    if not sys.stdin.isatty():
+        return None
+    editor = os.environ.get("VISUAL") or os.environ.get("EDITOR")
+    if not editor:
+        editor = "notepad" if sys.platform == "win32" else "vi"
+    fd, path = tempfile.mkstemp(suffix=".md", text=True)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(initial)
+        subprocess.run([*shlex.split(editor), path], check=True)
+        with open(path, encoding="utf-8") as f:
+            return f.read()
+    except (OSError, subprocess.SubprocessError):
+        return None
+    finally:
+        try:
+            os.unlink(path)
+        except OSError:
+            pass
+
+
+def _cmd_edit(session: ChatSession) -> CommandResult:
+    """Edit the last user message in $EDITOR and resend it."""
+    idx = next(
+        (i for i in range(len(session.messages) - 1, -1, -1) if session.messages[i]["role"] == "user"),
+        None,
+    )
+    if idx is None:
+        return CommandResult(message="No user message to edit.")
+    if not sys.stdin.isatty():
+        return CommandResult(message="/edit requires an interactive terminal.")
+
+    original = _message_text(session.messages[idx]["content"])
+    edited = _edit_in_editor(original)
+    if edited is None:
+        return CommandResult(message="Edit cancelled.")
+    edited = edited.strip()
+    if not edited:
+        return CommandResult(message="Edit cancelled (empty).")
+    if edited == original.strip():
+        return CommandResult(message="No changes made.")
+
+    _set_message_text(session.messages[idx], edited)
+    # Drop everything after the edited message so it can be resent cleanly.
+    del session.messages[idx + 1 :]
+    return CommandResult(resend_user=True)
+
+
+def _cmd_sessions() -> CommandResult:
+    """List saved session files in ~/.config/chatty/."""
+    home_config_dir = Path.home() / ".config" / "chatty"
+    if not home_config_dir.exists():
+        return CommandResult(message=f"No saved sessions in {home_config_dir}.")
+    files = sorted(
+        {*home_config_dir.glob("*.json"), *home_config_dir.glob("*.jsonl")},
+        key=lambda p: p.stat().st_mtime,
+        reverse=True,
+    )
+    if not files:
+        return CommandResult(message=f"No saved sessions in {home_config_dir}.")
+    lines = [f"Saved sessions in {home_config_dir}:"]
+    for p in files:
+        st = p.stat()
+        mtime = datetime.fromtimestamp(st.st_mtime).strftime("%Y-%m-%d %H:%M")
+        lines.append(f"  {p.name:<28} {mtime}  {st.st_size:>7} B")
+    return CommandResult(message="\n".join(lines))
+
+
 def _cmd_help() -> CommandResult:
     help_lines = [
         ("/help", "Show this help summary."),
         ("/quit, /exit", "Exit the application."),
         ("/clear", "Clear active chat history (excluding system prompt)."),
         ("/undo", "Remove the last user/assistant exchange."),
+        ("/retry, /regen", "Resend the last user message (drops the old reply)."),
+        ("/edit", "Edit the last user message in $EDITOR and resend."),
         ("/list", "Preview first line of active context window messages."),
         ("/system [prompt]", "Show, set, or clear the system prompt."),
         ("/ctx [size]", "Show context window details or set context size."),
@@ -626,6 +762,7 @@ def _cmd_help() -> CommandResult:
         ("/image [file]", "Attach an image from file path or clipboard."),
         ("/save [file]", "Save active chat session to session.json or custom file."),
         ("/load [file]", "Load chat session from session.json or custom file."),
+        ("/sessions", "List saved session files in ~/.config/chatty/."),
         ("/models [name]", "List available models or switch to a specific model."),
         ("/btw [msg]", "Send an ephemeral message without adding it to the context window."),
         ("/copy", "Copy the last assistant response to the clipboard."),
