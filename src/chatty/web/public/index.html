@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Chatty Web</title>
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>💬</text></svg>">
+    <link rel="stylesheet" href="/static/styles.css">
+    <!-- Assets vendored locally under public/vendor/ so the UI works offline. -->
+    <!-- KaTeX for math rendering -->
+    <link rel="stylesheet" href="/static/vendor/katex.min.css">
+    <script defer src="/static/vendor/katex.min.js"></script>
+
+    <!-- Marked.js for markdown rendering -->
+    <script defer src="/static/vendor/marked.min.js"></script>
+
+    <!-- marked-katex-extension for linking marked and KaTeX -->
+    <script defer src="/static/vendor/marked-katex.umd.js"></script>
+
+    <script defer src="/static/vendor/purify.min.js"></script>
+</head>
+<body>
+    <div id="paper-container">
+        <div class="resize-handle left"></div>
+        <div class="resize-handle right"></div>
+        <div id="chat-history"></div>
+        <div class="input-wrapper" id="input-wrapper">
+            <span class="prompt-char">></span>
+            <textarea id="user-input" rows="1" autofocus placeholder="Type a message (Enter to send, Shift+Enter for new line)..."></textarea>
+            <button id="stop-button" type="button" title="Stop generation" hidden>■ Stop</button>
+        </div>
+    </div>
+    <script defer src="/static/app.js"></script>
+</body>
+</html>

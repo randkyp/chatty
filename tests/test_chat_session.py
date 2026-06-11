@@ -1,6 +1,7 @@
 from unittest.mock import MagicMock
 
 import httpx
+
 from chatty.chat_session import ChatSession, TokenCounter
 
 # --- TokenCounter Tests ---
@@ -59,6 +60,14 @@ def test_token_counter_count_messages():
 
 
 # --- ChatSession Tests ---
+
+
+def test_chat_session_context_budget():
+    session = ChatSession(ctx_size=1000, genmax=0)
+    assert session.context_budget == 900
+
+    session = ChatSession(ctx_size=1000, genmax=200)
+    assert session.context_budget == 800
 
 
 def test_chat_session_append_simple():
@@ -193,3 +202,105 @@ def test_chat_session_build_payload_messages_clipping():
         {"role": "system", "content": "Sys"},
         {"role": "user", "content": "Msg 3"},
     ]
+
+
+# --- Merge-aware revert (undo-eats-merged-messages bug) ---
+
+
+def test_revert_preserves_merged_user_text():
+    """revert_last_user_message must not discard earlier merged-in user text."""
+    session = ChatSession()
+    session.add_user_message("keep me")
+    session.add_user_message("oops, failed send")  # merged into the previous user msg
+    assert len(session.messages) == 1  # merged
+
+    session.revert_last_user_message()
+    assert len(session.messages) == 1
+    assert session.messages[0]["content"] == "keep me"
+
+
+def test_revert_pops_non_merged_user_message():
+    session = ChatSession()
+    session.add_assistant_message("a")  # leading assistant (edge case)
+    session.add_user_message("hello")  # new message, not merged (prev is assistant)
+    session.revert_last_user_message()
+    assert len(session.messages) == 1
+    assert session.messages[0]["role"] == "assistant"
+
+
+def test_revert_is_idempotent_after_assistant_message():
+    session = ChatSession()
+    session.add_user_message("q")
+    session.add_assistant_message("a")  # clears the revert token
+    session.revert_last_user_message()  # no-op
+    assert [m["role"] for m in session.messages] == ["user", "assistant"]
+
+
+def test_append_returns_merge_info():
+    session = ChatSession()
+    assert session._append("user", "a") == (False, None)
+    merged, original = session._append("user", "b")
+    assert merged is True
+    assert original == "a"
+
+
+# --- stage_user_message ---
+
+
+class _FakeCounter:
+    def __init__(self, per_message=1):
+        self.per_message = per_message
+
+    def count(self, text):
+        return len(text.split())
+
+    def count_messages(self, messages):
+        return self.per_message * len(messages)
+
+
+def test_stage_user_message_returns_payload_and_attached():
+    session = ChatSession(system_prompt="sys")
+    session.set_counter(_FakeCounter())
+    payload, attached = session.stage_user_message("hello world")
+    assert attached == []
+    assert payload[-1] == {"role": "user", "content": "hello world"}
+    assert payload[0]["role"] == "system"
+
+
+def test_stage_user_message_bust_returns_none_and_revert_restores():
+    session = ChatSession()
+    session.set_counter(_FakeCounter(per_message=10_000))  # always busts
+    payload, _ = session.stage_user_message("too big")
+    assert payload is None
+    session.revert_last_user_message()
+    assert session.messages == []
+
+
+# --- Context-clipping edge cases ---
+
+
+def test_build_payload_drops_leading_assistant():
+    session = ChatSession(system_prompt="sys")
+    session.set_counter(_FakeCounter())
+    session.messages = [
+        {"role": "assistant", "content": "stray"},
+        {"role": "user", "content": "u"},
+    ]
+    payload = session.build_payload_messages()
+    assert [m["role"] for m in payload] == ["system", "user"]
+
+
+def test_count_messages_image_cost():
+    counter = TokenCounter(base_url="")
+    counter._use_server = False  # force tiktoken
+    msgs = [
+        {
+            "role": "user",
+            "content": [
+                {"type": "text", "text": "look"},
+                {"type": "image_url", "image_url": {"url": "data:image/png;base64,AAAA"}},
+            ],
+        }
+    ]
+    # Each image contributes a ~1000-token buffer.
+    assert counter.count_messages(msgs) >= 1000

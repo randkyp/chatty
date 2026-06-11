@@ -1,4 +1,5 @@
 import pytest
+
 from chatty.chat_session import ChatSession
 from chatty.commands import (
     _del_nested,
@@ -149,7 +150,7 @@ base_url = "http://localhost:8080"
 base_url = "http://localhost:9000"
 system_prompt = "Custom Sys"
 ctx_size = 8192
-genmax = 1024
+genmax = 0
 """)
     app_config.config_path = config_file
 
@@ -159,7 +160,7 @@ genmax = 1024
     assert app_config.profile.base_url == "http://localhost:9000"
     assert session.system_prompt == "Custom Sys"
     assert session.ctx_size == 8192
-    assert session.genmax == 1024
+    assert session.genmax == 0
 
 
 def test_cmd_samplers(session, app_config):
@@ -211,3 +212,101 @@ def test_cmd_save_and_load_session(session, app_config, tmp_path):
 def test_cmd_image_file_not_found(session, app_config):
     res = handle_command("/image /nonexistent/file.png", session, app_config)
     assert "File not found" in res.message
+
+
+def test_cmd_models_switch(session, app_config):
+    res = handle_command("/models gpt-4", session, app_config)
+    assert "Switched to model 'gpt-4'" in res.message
+    assert app_config.profile.model == "gpt-4"
+
+
+def test_cmd_models_list(session, app_config, monkeypatch):
+    import chatty.api
+
+    monkeypatch.setattr(chatty.api, "list_models", lambda b, a: ["model-1", "model-2"])
+    res = handle_command("/models", session, app_config)
+    assert "model-1" in res.message
+    assert "model-2" in res.message
+
+
+def test_cmd_btw(session, app_config):
+    res_empty = handle_command("/btw", session, app_config)
+    assert "Usage: /btw <message>" in res_empty.message
+
+    res = handle_command("/btw what is 2+2?", session, app_config)
+    assert res.ephemeral_prompt == "what is 2+2?"
+    assert res.message is None
+    assert res.quit is False
+
+
+# --- is_command ---
+
+
+def test_is_command():
+    from chatty.commands import is_command
+
+    assert is_command("/help")
+    assert is_command("/profile work")
+    assert not is_command("//literal slash")
+    assert not is_command("hello")
+    assert not is_command("/3d")  # must start with letters
+
+
+# --- /retry, /ctx persistence, /sessions, profile switch ---
+
+
+def test_cmd_retry(session, app_config):
+    session.add_user_message("question")
+    session.add_assistant_message("answer")
+    res = handle_command("/retry", session, app_config)
+    assert res.resend_user is True
+    assert [m["role"] for m in session.messages] == ["user"]
+
+
+def test_cmd_retry_nothing(session, app_config):
+    res = handle_command("/retry", session, app_config)
+    assert "Nothing to retry" in res.message
+    assert res.resend_user is False
+
+
+def test_cmd_ctx_persists_to_profile(session, app_config):
+    handle_command("/ctx 1234", session, app_config)
+    assert session.ctx_size == 1234
+    assert app_config.profile.ctx_size == 1234  # now persisted like /genmax
+
+
+def test_cmd_profile_not_found(session, tmp_path):
+    from chatty.config import AppConfig, Profile
+
+    cfg_path = tmp_path / "config.toml"
+    cfg_path.write_text('[profile.default]\nbase_url = "http://x"\n')
+    cfg = AppConfig(config_path=cfg_path, profile=Profile(name="default", base_url="http://x"))
+    res = handle_command("/profile ghost", session, cfg)
+    assert "not found" in res.message.lower()
+
+
+def test_cmd_sessions_lists_files(session, app_config, tmp_path, monkeypatch):
+    import chatty.commands as cmds
+
+    fake_home = tmp_path / "home"
+    (fake_home / ".config" / "chatty").mkdir(parents=True)
+    (fake_home / ".config" / "chatty" / "a.json").write_text("{}")
+    monkeypatch.setattr(cmds.Path, "home", classmethod(lambda cls: fake_home))
+    res = handle_command("/sessions", session, app_config)
+    assert "a.json" in res.message
+
+
+def test_save_session_roundtrip_has_timestamp(tmp_path):
+    from chatty.commands import save_session
+
+    s = ChatSession(system_prompt="sys", ctx_size=999, genmax=5)
+    s.add_user_message("hi")
+    path = tmp_path / "s.json"
+    save_session(s, path)
+    import json
+
+    data = json.loads(path.read_text())
+    assert data["system_prompt"] == "sys"
+    assert data["ctx_size"] == 999
+    assert "saved_at" in data
+    assert data["messages"][0]["content"] == "hi"

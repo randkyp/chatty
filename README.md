@@ -35,9 +35,33 @@ uv run chatty --debug                    # print raw JSON payloads
 If you want `chatty` available everywhere:
 
 ```bash
-uv tool install .
+uv tool install .            # CLI only
+uv tool install '.[web]'     # CLI + web UI
 chatty
 ```
+
+> **Offline note:** `tiktoken` downloads its `cl100k_base` encoding on first use,
+> so the very first run (used for token counting fallback) needs network access.
+> The web UI's JavaScript/CSS (marked, KaTeX, DOMPurify) is **vendored** under
+> `chatty/web/public/vendor/`, so the browser side works fully offline.
+
+## Web UI
+
+Chatty also includes a minimalistic, endlessly scrollable "typewriter paper" web application that maintains the same features and configurations as the CLI. It is part of the package (install the `web` extra) rather than a loose script.
+
+To start the web server:
+```bash
+chatty --web                       # if installed with the [web] extra
+uv run chatty --web                # from a repo checkout
+python -m chatty.web.server        # equivalent module entry point
+```
+You can pass the same connection arguments as the CLI (e.g. `chatty --web -p myprofile -m gpt-4o`) plus `--host` and `--port` (default `127.0.0.1:8000`). Config is loaded once at startup and shared across browser tabs. Once the server starts, navigate to `http://localhost:8000`.
+
+- Default input mode is `Enter` to send, `Shift+Enter` for a new line.
+- Switch themes on the fly by typing `/theme dark` or `/theme light`; your choice is remembered across reloads.
+- Press **Stop** (or `Esc`) to cancel an in-progress generation.
+- Paste or drag-and-drop an image into the input to attach it.
+- Chat history is restored on reload and the connection auto-reconnects if dropped.
 
 ## Configuration & Sessions
 
@@ -65,6 +89,7 @@ You can override the config path using the `-c` or `--config` flag.
 
 - **Multiline** by default — press `Enter` for a new line.
 - **Submit** with `Meta+Enter` (Esc → Enter) or `Ctrl+Enter`.
+- **Tab completion** for slash commands, `/profile` names, `/models` names, and `@` file paths.
 - **Image Attachments**: Type `@/path/to/image.png` anywhere in your message to attach an image inline.
 - **Ctrl+C** during generation stops the stream gracefully.
 - **Ctrl+D** exits.
@@ -76,6 +101,8 @@ You can override the config path using the `-c` or `--config` flag.
 | `/quit` | Exit |
 | `/clear` | Clear history (keeps system prompt) |
 | `/undo` | Remove last user+assistant exchange |
+| `/retry`, `/regen` | Resend the last user message (drops the old reply) |
+| `/edit` | Edit the last user message in `$EDITOR` and resend |
 | `/system [text]` | Show/set/disable system prompt |
 | `/ctx [n]` | Show/set context size |
 | `/genmax [n]` | Show/set max generation tokens |
@@ -88,6 +115,10 @@ You can override the config path using the `-c` or `--config` flag.
 | `/image [path]` | Attach an image from file path or clipboard |
 | `/save [file]` | Save active chat session (defaults to `~/.config/chatty/session.json`) |
 | `/load [file]` | Load chat session (looks in `~/.config/chatty/`, `./`, and config directory) |
+| `/sessions` | List saved session files in `~/.config/chatty/` |
+| `/copy` | Copy the last assistant response to the clipboard |
+
+Pass `--autosave` to save the session to `~/.config/chatty/session.json` automatically on exit.
 
 ## Development
 

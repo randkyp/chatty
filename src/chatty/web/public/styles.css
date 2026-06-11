@@ -1,0 +1,234 @@
+@font-face {
+    font-family: "TT2020 Style E";
+    src: url("vendor/fonts/TT2020StyleE-Regular.woff2") format("woff2");
+    font-weight: normal;
+    font-style: normal;
+    font-display: swap;
+}
+
+@font-face {
+    font-family: "TT2020 Style E";
+    src: url("vendor/fonts/TT2020StyleE-Italic.woff2") format("woff2");
+    font-weight: normal;
+    font-style: italic;
+    font-display: swap;
+}
+
+:root {
+    --bg: #fdfbf7;
+    --fg: #222222;
+    --fg-user: #666666;
+    --accent: #999999;
+}
+
+[data-theme="dark"] {
+    --bg: #1a1a1a;
+    --fg: #e0e0e0;
+    --fg-user: #999999;
+    --accent: #555555;
+}
+
+@media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+        --bg: #1a1a1a;
+        --fg: #e0e0e0;
+        --fg-user: #999999;
+        --accent: #555555;
+    }
+}
+
+body {
+    margin: 0;
+    padding: 0;
+    background-color: var(--bg);
+    color: var(--fg);
+    font-family: "TT2020 Style E", "TT2020Base", "Courier New", Courier, monospace;
+    font-size: 20px;
+    line-height: 1.5;
+    display: flex;
+    justify-content: center;
+    min-height: 100vh;
+}
+
+#paper-container {
+    position: relative;
+    width: 100%;
+    max-width: 70ch;
+    padding: 40px 20px 50vh 20px;
+    box-sizing: border-box;
+    filter: grayscale(100%);
+}
+
+.resize-handle {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    width: 20px;
+    cursor: col-resize;
+    z-index: 100;
+}
+
+.resize-handle.left {
+    left: -10px;
+}
+
+.resize-handle.right {
+    right: -10px;
+}
+
+.message {
+    margin-bottom: 1.5em;
+    word-wrap: break-word;
+}
+
+.message.user {
+    color: var(--fg-user);
+    white-space: pre-wrap; /* Preserve user input newlines */
+}
+
+.message.assistant {
+    color: var(--fg);
+}
+
+.message.system {
+    color: var(--accent);
+    font-style: italic;
+    white-space: pre-wrap;
+}
+
+.message.warning {
+    color: #cc6600;
+}
+[data-theme="dark"] .message.warning {
+    color: #ff9933;
+}
+@media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) .message.warning {
+        color: #ff9933;
+    }
+}
+
+.message.error {
+    color: #cc0000;
+}
+[data-theme="dark"] .message.error {
+    color: #ff6666;
+}
+@media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) .message.error {
+        color: #ff6666;
+    }
+}
+
+/* Markdown specific styles */
+.message.assistant p {
+    margin: 0 0 1em 0;
+}
+.message.assistant p:last-child {
+    margin: 0;
+}
+.message.assistant pre {
+    background: transparent;
+    padding: 0;
+    margin: 1em 0;
+    white-space: pre-wrap;
+    font-family: inherit;
+}
+.message.assistant code {
+    font-family: inherit;
+    background-color: color-mix(in srgb, var(--fg) 10%, transparent);
+    padding: 0.1em 0.3em;
+    border-radius: 3px;
+}
+.message.assistant pre code {
+    background-color: transparent;
+    padding: 0;
+}
+.message.assistant ul, .message.assistant ol {
+    margin: 0 0 1em 0;
+    padding-left: 2ch;
+}
+.message.assistant li {
+    margin-bottom: 0.5em;
+}
+
+/* Tables with spacing only */
+.message.assistant table {
+    border-collapse: collapse;
+    margin: 1em 0;
+    font-family: inherit;
+}
+.message.assistant th, .message.assistant td {
+    padding: 0 2ch 0 0;
+    border: none;
+    text-align: left;
+}
+.message.assistant th {
+    border-bottom: 1px dashed var(--accent);
+    font-weight: normal;
+}
+
+.input-wrapper {
+    display: flex;
+    align-items: flex-start;
+    margin-top: 2em;
+    scroll-margin-top: 40px; /* Target for scrolling user message to top */
+}
+
+.prompt-char {
+    margin-right: 1ch;
+    color: var(--fg-user);
+    user-select: none;
+}
+
+textarea {
+    flex-grow: 1;
+    background: transparent;
+    border: none;
+    color: var(--fg-user);
+    font-family: inherit;
+    font-size: inherit;
+    line-height: inherit;
+    padding: 0;
+    margin: 0;
+    resize: none;
+    outline: none;
+    overflow: hidden;
+}
+
+/* Stop button: appears only while a response is generating. */
+#stop-button {
+    margin-left: 1ch;
+    align-self: flex-start;
+    background: transparent;
+    border: 1px solid var(--accent);
+    color: var(--fg);
+    font-family: inherit;
+    font-size: 0.75em;
+    padding: 0.1em 0.6em;
+    cursor: pointer;
+    border-radius: 3px;
+    white-space: nowrap;
+}
+
+#stop-button:hover {
+    border-color: var(--fg);
+}
+
+/* Pending image attachment chips, shown above the input row. */
+#image-chips {
+    display: none;
+    flex-wrap: wrap;
+    gap: 0.5ch;
+    margin-top: 1em;
+}
+
+.image-chip {
+    border: 1px dashed var(--accent);
+    color: var(--fg-user);
+    font-size: 0.75em;
+    padding: 0.1em 0.6em;
+    border-radius: 3px;
+    cursor: pointer;
+    user-select: none;
+}
