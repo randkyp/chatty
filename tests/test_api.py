@@ -101,6 +101,24 @@ def test_stream_chat_emits_usage(respx_mock):
     assert any(et == "usage" for et, _ in events)
 
 
+def test_stream_chat_surfaces_inband_error(respx_mock):
+    # Some OpenAI-compatible providers (e.g. NVIDIA NIM) return HTTP 200 but
+    # stream the error *inside* a data: line instead of normal choices. The
+    # client must surface it rather than silently yielding a blank response.
+    body = (
+        'data: {"error": {"message": "Internal server error", '
+        '"type": "internal_server_error", "code": 500}}\n\n'
+        "data: [DONE]\n"
+    )
+    respx_mock.post("http://up/v1/chat/completions").respond(
+        200, text=body, headers={"content-type": "text/event-stream"}
+    )
+    events = list(stream_chat("http://up", None, "m", [{"role": "user", "content": "x"}], {}, 0))
+    assert len(events) == 1
+    assert events[0][0] == "error"
+    assert "Internal server error" in events[0][1]
+
+
 def test_get_client_is_reused():
     from chatty.api import close_clients, get_client
 

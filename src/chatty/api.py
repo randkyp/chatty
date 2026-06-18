@@ -149,6 +149,14 @@ def stream_chat(
                         return
                     try:
                         chunk = json.loads(data_str)
+                        # Some providers (e.g. NVIDIA NIM) return HTTP 200 but
+                        # stream the error in-band as a data: line. Surface it
+                        # instead of silently yielding a blank response.
+                        err = chunk.get("error")
+                        if err:
+                            msg = err.get("message") if isinstance(err, dict) else str(err)
+                            yield "error", f"Server error: {msg}"
+                            return
                         usage = chunk.get("usage")
                         if usage:
                             yield "usage", json.dumps(usage)
