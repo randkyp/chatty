@@ -48,6 +48,7 @@ body {
     display: flex;
     justify-content: center;
     min-height: 100vh;
+    text-wrap: pretty;
 }
 
 #paper-container {
