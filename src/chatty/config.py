@@ -71,7 +71,7 @@ class AppConfig:
     config_path: Path
     profile: Profile
     debug: bool = False
-    enter_sends: bool = False
+    enter_sends: bool = True
     raw_output: bool = False
     autosave: bool = False
     # Stores the raw parsed TOML so we can write back on /save.
@@ -168,9 +168,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument(
         "-e",
-        "--enter-sends",
+        "--multiline",
         action="store_true",
-        help="Enter sends message (Shift+Enter for newlines).",
+        help="Enter inserts a newline; submit with Meta+Enter or Ctrl+Enter.",
     )
     parser.add_argument(
         "-r",
@@ -236,7 +236,7 @@ def load_config(argv: list[str] | None = None) -> AppConfig:
         config_path=config_path,
         profile=profile,
         debug=args.debug,
-        enter_sends=args.enter_sends,
+        enter_sends=not args.multiline,
         raw_output=args.raw,
         autosave=args.autosave,
         _raw=raw,

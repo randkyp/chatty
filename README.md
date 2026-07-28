@@ -57,7 +57,7 @@ Config and sessions live in `~/.config/chatty/` by default.
 
 ### Input
 
-- **Multiline** by default — `Enter` adds a new line; submit with `Meta+Enter` (Esc → Enter) or `Ctrl+Enter`.
+- `Enter` sends by default; `Shift+Enter` (Esc → Enter) adds a new line. Pass `-e`/`--multiline` to flip this: `Enter` adds a new line, submit with `Meta+Enter` (Esc → Enter) or `Ctrl+Enter`.
 - **Tab completion** for slash commands, profile/model names, and `@` file paths.
 - Type `@/path/to/image.png` anywhere in a message to attach an image.
 - **Ctrl+C** stops the stream; **Ctrl+D** exits.

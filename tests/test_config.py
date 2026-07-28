@@ -83,7 +83,7 @@ def test_parse_args():
     assert args.model == "gpt-4"
     assert args.system == "SysPrompt"
     assert args.debug is True
-    assert args.enter_sends is True
+    assert args.multiline is True
     assert args.raw is True
 
 

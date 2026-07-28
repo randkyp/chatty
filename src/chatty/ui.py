@@ -3,11 +3,11 @@ Terminal UI: prompt_toolkit input, rich markdown rendering.
 
 Uses native terminal scrolling (no curses alternate buffer).
 
-Default mode: multiline input; send with Meta+Enter (Esc then Enter)
-or Ctrl+Enter (where the terminal supports it).
+Default mode: Enter sends immediately; Shift+Enter (Esc→Enter)
+inserts a newline.
 
-With --enter-sends / -e: Enter sends immediately; Shift+Enter
-(Esc→Enter) inserts a newline.
+With --multiline / -e: multiline input; send with Meta+Enter
+(Esc then Enter) or Ctrl+Enter (where the terminal supports it).
 """
 
 from __future__ import annotations
@@ -48,13 +48,13 @@ console = Console(theme=_theme)
 # ── prompt_toolkit input ───────────────────────────────────────────────────
 
 
-def _build_key_bindings(enter_sends: bool = False) -> KeyBindings:
+def _build_key_bindings(enter_sends: bool = True) -> KeyBindings:
     """Create key bindings for the input prompt.
 
-    When *enter_sends* is False (default):
-        Enter inserts a newline; Meta+Enter / Ctrl+Enter submits.
-    When *enter_sends* is True:
+    When *enter_sends* is True (default):
         Enter submits; Shift+Enter (Escape→Enter) inserts a newline.
+    When *enter_sends* is False:
+        Enter inserts a newline; Meta+Enter / Ctrl+Enter submits.
     """
     kb = KeyBindings()
 
@@ -148,7 +148,7 @@ class ChattyCompleter(Completer):
             return
 
 
-def create_prompt_session(enter_sends: bool = False, completer: Completer | None = None) -> PromptSession:
+def create_prompt_session(enter_sends: bool = True, completer: Completer | None = None) -> PromptSession:
     """Build a PromptSession with multiline input and custom key bindings."""
     return PromptSession(
         key_bindings=_build_key_bindings(enter_sends),
@@ -213,7 +213,7 @@ def print_welcome(
     model: str,
     ctx: int,
     genmax: int,
-    enter_sends: bool = False,
+    enter_sends: bool = True,
 ) -> None:
     """Print a welcome banner."""
     console.print()

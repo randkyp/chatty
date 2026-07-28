@@ -24,7 +24,7 @@ Use `argparse` (or a modern equivalent) to handle the following startup argument
 - `--model`, `-m`: Override the model name for the current session.
 - `--system`, `-s`: Override the system prompt for the current session.
 - `--debug`: Enable debug mode. When active, print the exact JSON payload being sent to the API before streaming the response.
-- `--enter-sends`, `-e`: Enable immediate message submission on pressing Enter, using Shift+Enter (Esc then Enter) to insert newlines.
+- `--multiline`, `-e`: Enter inserts a newline instead of sending; submit with Meta+Enter (Esc then Enter) or Ctrl+Enter. (Enter sends immediately by default.)
 - `--raw`, `-r`: Output raw assistant streaming responses directly to stdout instead of rendering them via Markdown formatting.
 
 ### 4. API & Context Management
