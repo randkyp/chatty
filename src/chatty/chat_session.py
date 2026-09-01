@@ -58,25 +58,42 @@ class TokenCounter:
                 resp = self._post_tokenize(text)
                 if resp.status_code == 200:
                     data = resp.json()
-                    self._use_server = True
-                    ans = len(data.get("tokens", []))
-                    self._cache[cache_key] = ans
-                    self._enforce_cache_size()
-                    return ans
+                    if "count" in data and isinstance(data["count"], int):
+                        ans = data["count"]
+                    else:
+                        ans = len(data.get("tokens", []))
+
+                    if ans == 0 and text:
+                        # Server returned 0 for non-empty text; likely an unsupported API format.
+                        self._use_server = False
+                    else:
+                        self._use_server = True
+                        self._cache[cache_key] = ans
+                        self._enforce_cache_size()
+                        return ans
                 else:
                     self._use_server = False
-            except (httpx.HTTPError, json.JSONDecodeError):
+            except (httpx.HTTPError, json.JSONDecodeError, TypeError, AttributeError):
                 self._use_server = False
 
         if self._use_server:
             try:
                 resp = self._post_tokenize(text)
                 if resp.status_code == 200:
-                    ans = len(resp.json().get("tokens", []))
-                    self._cache[cache_key] = ans
-                    self._enforce_cache_size()
-                    return ans
-            except (httpx.HTTPError, json.JSONDecodeError):
+                    data = resp.json()
+                    if "count" in data and isinstance(data["count"], int):
+                        ans = data["count"]
+                    else:
+                        ans = len(data.get("tokens", []))
+
+                    if ans == 0 and text:
+                        # Transient failure or API format mismatch
+                        pass
+                    else:
+                        self._cache[cache_key] = ans
+                        self._enforce_cache_size()
+                        return ans
+            except (httpx.HTTPError, json.JSONDecodeError, TypeError, AttributeError):
                 pass
             # Fall through to tiktoken on transient failure.
 
