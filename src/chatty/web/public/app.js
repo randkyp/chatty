@@ -173,6 +173,49 @@ function handleServerMessage(data) {
                 .then(() => appendSystemMessage('Last response copied to clipboard.'))
                 .catch((err) => appendSystemMessage(`Failed to copy: ${err}`, 'error'));
             break;
+        case 'clear_dom':
+            history.innerHTML = '';
+            break;
+        case 'remove_last_exchange': {
+            const messages = history.querySelectorAll('.message.assistant, .message.user');
+            if (messages.length >= 2) {
+                messages[messages.length - 1].remove();
+                messages[messages.length - 2].remove();
+            } else if (messages.length === 1) {
+                messages[0].remove();
+            }
+            break;
+        }
+        case 'remove_last_assistant': {
+            const assistantMsgs = history.querySelectorAll('.message.assistant');
+            if (assistantMsgs.length > 0) {
+                assistantMsgs[assistantMsgs.length - 1].remove();
+            }
+            break;
+        }
+        case 'load_history': {
+            history.innerHTML = '';
+            const messages = data.content;
+            messages.forEach(msg => {
+                if (msg.role === 'user') {
+                    let text = '';
+                    if (typeof msg.content === 'string') text = msg.content;
+                    else if (Array.isArray(msg.content)) {
+                        text = msg.content.filter(p => p.type === 'text').map(p => p.text).join('');
+                    }
+                    appendUserMessage(text);
+                } else if (msg.role === 'assistant') {
+                    let text = '';
+                    if (typeof msg.content === 'string') text = msg.content;
+                    else if (Array.isArray(msg.content)) {
+                        text = msg.content.filter(p => p.type === 'text').map(p => p.text).join('');
+                    }
+                    appendAssistantMessage(text);
+                }
+            });
+            scrollToBottom();
+            break;
+        }
         case 'stream_start':
             setStreaming(true);
             currentAssistantDiv = document.createElement('div');

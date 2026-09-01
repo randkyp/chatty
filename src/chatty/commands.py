@@ -16,6 +16,7 @@ import sys
 import tempfile
 from dataclasses import dataclass
 from datetime import datetime
+from enum import Enum, auto
 from pathlib import Path
 from typing import Any
 
@@ -42,6 +43,13 @@ def is_command(text: str) -> bool:
     return bool(_COMMAND_RE.match(first_word))
 
 
+class ClientType(Enum):
+    """Context in which the command is executed."""
+
+    TUI = auto()
+    WEB = auto()
+
+
 @dataclass
 class CommandResult:
     """Result of executing a slash command."""
@@ -52,6 +60,11 @@ class CommandResult:
     copy_last: bool = False
     # Resend the current last user message (used by /retry, /regen, /edit).
     resend_user: bool = False
+    # DOM synchronization flags
+    clear_dom: bool = False
+    remove_last_exchange: bool = False
+    remove_last_assistant: bool = False
+    load_messages: list[dict[str, Any]] | None = None
 
 
 # ── Sampler helpers ────────────────────────────────────────────────────────
@@ -150,6 +163,7 @@ COMMANDS: list[str] = [
     "/regen",
     "/edit",
     "/sessions",
+    "/theme",
 ]
 
 
@@ -157,6 +171,7 @@ def handle_command(
     raw_input: str,
     session: ChatSession,
     cfg: AppConfig,
+    client_type: ClientType = ClientType.TUI,
 ) -> CommandResult:
     """Parse and execute a slash command. Returns a CommandResult."""
     # Split into command + argument.
@@ -173,15 +188,17 @@ def handle_command(
 
     match cmd:
         case "/quit" | "/exit":
+            if client_type == ClientType.WEB:
+                return CommandResult(message="Command disabled on Web UI.")
             return CommandResult(quit=True)
 
         case "/clear" | "/newchat":
             session.clear()
-            return CommandResult(message="History cleared.")
+            return CommandResult(message="History cleared.", clear_dom=True)
 
         case "/undo":
             if session.undo():
-                return CommandResult(message="Last exchange removed.")
+                return CommandResult(message="Last exchange removed.", remove_last_exchange=True)
             else:
                 return CommandResult(message="Nothing to undo.")
 
@@ -201,7 +218,7 @@ def handle_command(
             return _cmd_samplers(arg, cfg, session)
 
         case "/image":
-            return _cmd_image(arg, session)
+            return _cmd_image(arg, session, client_type)
 
         case "/save":
             return _cmd_save_session(arg, session, cfg)
@@ -228,10 +245,15 @@ def handle_command(
             return _cmd_retry(session)
 
         case "/edit":
-            return _cmd_edit(session)
+            return _cmd_edit(session, client_type)
 
         case "/sessions":
             return _cmd_sessions()
+
+        case "/theme":
+            if client_type == ClientType.TUI:
+                return CommandResult(message="Command disabled in TUI.")
+            return CommandResult(message="Theme handled client-side.")
 
         case _:
             return CommandResult(message=f"Unknown command: {cmd}")
@@ -506,14 +528,19 @@ def _cmd_load_session(arg: str, session: ChatSession, cfg: AppConfig) -> Command
         if genmax is not None:
             cfg.profile.genmax = genmax
 
-        return CommandResult(message=f"Session restored from {resolved_path} ({len(messages)} messages loaded).")
+        return CommandResult(
+            message=f"Session restored from {resolved_path} ({len(messages)} messages loaded).",
+            load_messages=messages,
+        )
     except Exception as e:
         return CommandResult(message=f"Failed to load session: {e}")
 
 
-def _cmd_image(arg: str, session: ChatSession) -> CommandResult:
+def _cmd_image(arg: str, session: ChatSession, client_type: ClientType) -> CommandResult:
     arg = arg.strip()
     if not arg or arg.lower() == "clipboard":
+        if client_type == ClientType.WEB:
+            return CommandResult(message="Clipboard slash command disabled on web. Use paste or drag-and-drop instead.")
         return _paste_from_clipboard(session)
 
     try:
@@ -673,7 +700,7 @@ def _cmd_retry(session: ChatSession) -> CommandResult:
         session.messages.pop()
     if not session.messages or session.messages[-1]["role"] != "user":
         return CommandResult(message="Nothing to retry.")
-    return CommandResult(resend_user=True)
+    return CommandResult(resend_user=True, remove_last_assistant=True)
 
 
 def _edit_in_editor(initial: str) -> str | None:
@@ -699,8 +726,11 @@ def _edit_in_editor(initial: str) -> str | None:
             pass
 
 
-def _cmd_edit(session: ChatSession) -> CommandResult:
+def _cmd_edit(session: ChatSession, client_type: ClientType) -> CommandResult:
     """Edit the last user message in $EDITOR and resend it."""
+    if client_type == ClientType.WEB:
+        return CommandResult(message="Edit feature disabled on web.")
+
     idx = next(
         (i for i in range(len(session.messages) - 1, -1, -1) if session.messages[i]["role"] == "user"),
         None,

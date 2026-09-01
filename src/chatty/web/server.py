@@ -22,7 +22,7 @@ from fastapi.staticfiles import StaticFiles
 
 from chatty.api import stream_chat
 from chatty.chat_session import ChatSession, TokenCounter
-from chatty.commands import handle_command, is_command
+from chatty.commands import ClientType, handle_command, is_command
 from chatty.config import AppConfig, load_config, resolve_limits
 
 app = FastAPI()
@@ -161,7 +161,7 @@ async def _handle_message(
 
         await sender.send("command_start", first_word)
         try:
-            result = await asyncio.to_thread(handle_command, text, session, cfg)
+            result = await asyncio.to_thread(handle_command, text, session, cfg, client_type=ClientType.WEB)
         except Exception as e:  # noqa: BLE001 - surface command failures to the user
             await sender.send("command_end", "")
             await sender.send("error", f"Command Error: {e}")
@@ -171,6 +171,18 @@ async def _handle_message(
         if result.quit:
             await sender.send("system", "Goodbye!")
             return True
+
+        if result.clear_dom:
+            await sender.send("clear_dom", "")
+
+        if result.remove_last_exchange:
+            await sender.send("remove_last_exchange", "")
+
+        if result.remove_last_assistant:
+            await sender.send("remove_last_assistant", "")
+
+        if result.load_messages is not None:
+            await sender.send("load_history", result.load_messages[-50:])
 
         if result.ephemeral_prompt:
             messages = [{"role": "user", "content": result.ephemeral_prompt}]

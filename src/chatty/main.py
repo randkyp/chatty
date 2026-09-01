@@ -179,6 +179,31 @@ def _handle_command_result(result: CommandResult, session: ChatSession, cfg: App
                 print_error(f"Failed to copy to clipboard: {e}")
         return False
 
+    if result.load_messages is not None:
+        from rich.markdown import Markdown
+
+        from chatty.ui import console, print_user
+
+        print("\033[H\033[J", end="", flush=True)
+
+        loaded_to_show = result.load_messages[-50:]
+        if loaded_to_show:
+            for msg in loaded_to_show:
+                content = msg.get("content", "")
+                if isinstance(content, list):
+                    content = "".join(p.get("text", "") for p in content if p.get("type") == "text")
+
+                if msg.get("role") == "user":
+                    print_user(content)
+                elif msg.get("role") == "assistant":
+                    console.print(Markdown(content))
+                    console.print()
+
+        # Override the original CommandResult message to reflect what was actually displayed
+        result.message = (
+            f"Session restored. {len(result.load_messages)} messages loaded (displaying last {len(loaded_to_show)})."
+        )
+
     if result.message:
         print_system(result.message)
     return False
