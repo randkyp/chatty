@@ -1,86 +1,70 @@
 # Chatty
 
-An interactive OpenAI-compatible `/v1/chat/completions` client for your TTY.
+An interactive OpenAI-compatible `/v1/chat/completions` client for your TTY and browser.
 
 Be forewarned: this project is entirely vibecoded. :)
 
 ## Quick Start
 
-No install needed — run from the project directory:
-
+Run instantly without installing:
 ```bash
-uv run chatty   # syncs deps automatically on first run
+uv run chatty
 ```
-
-On first run, `chatty` generates a default config at `~/.config/chatty/config.toml`. Open it and add your API keys/endpoints. (Or copy `config.example.toml` there yourself.)
-
-```bash
-uv run chatty -p myprofile               # use a named profile
-uv run chatty -m gpt-4o -s "Be concise"  # override model & system prompt
-uv run chatty -c /path/to/config.toml    # use a specific config file
-uv run chatty --debug                    # print raw JSON payloads
-```
+On first run, `chatty` generates a default config at `~/.config/chatty/config.toml`. Add your API keys/endpoints to it.
 
 To install globally:
-
 ```bash
 uv tool install .            # CLI only
 uv tool install '.[web]'     # CLI + web UI
-chatty
 ```
 
-> **Offline note:** `tiktoken` downloads its `cl100k_base` encoding on first use, so the very first run needs network access. The web UI's JS/CSS (marked, KaTeX, DOMPurify) is vendored, so the browser side works fully offline.
+> **Offline Note:** `tiktoken` downloads its `cl100k_base` encoding on first use, so the very first run needs network access. The web UI's JS/CSS (marked, KaTeX, DOMPurify) and fonts (TT2020) are vendored, so the browser side works fully offline.
 
-## Web UI
-
-A minimalistic, endlessly scrollable "typewriter paper" web app with the same features and config as the CLI.
+## Usage
 
 ```bash
-chatty --web                       # if installed with the [web] extra
-uv run chatty --web                # from a repo checkout
+chatty -p myprofile               # use a named profile
+chatty -m gpt-4o -s "Be concise"  # override model & system prompt
+chatty -c /path/to/config.toml    # use a specific config file
+chatty --web                      # launch web UI (default: http://127.0.0.1:8000)
 ```
-
-Takes the same connection arguments as the CLI, plus `--host` and `--port` (default `127.0.0.1:8000`). Then open `http://localhost:8000`.
-
-- `Enter` to send, `Shift+Enter` for a new line.
-- `/theme dark` or `/theme light` switches themes (remembered across reloads).
-- **Stop** (or `Esc`) cancels an in-progress generation.
-- Paste or drag-and-drop an image to attach it.
 
 ## Configuration & Sessions
 
-Config and sessions live in `~/.config/chatty/` by default.
+**Config:** Resolved from `~/.config/chatty/config.toml`, then `./config.toml`. Overridable with `-c/--config`.
+**Sessions:** `/save [file]` and `/load [file]` default to `~/.config/chatty/session.json(l)`. Pass `--autosave` to save on exit.
 
-**Config** is resolved from `~/.config/chatty/config.toml`, then `./config.toml`; if neither exists, a default is generated. Override with `-c/--config`.
+### Input Features
 
-**Sessions**: `/save [file]` and `/load [file]` default to `~/.config/chatty/session.json(l)`. Relative filenames are looked up in `~/.config/chatty/`, `./`, and the active config directory; absolute or `./`-prefixed paths are taken as-is. Pass `--autosave` to save the session automatically on exit.
-
-### Input
-
-- `Enter` sends by default; `Shift+Enter` (Esc → Enter) adds a new line. Pass `-e`/`--multiline` to flip this: `Enter` adds a new line, submit with `Meta+Enter` (Esc → Enter) or `Ctrl+Enter`.
-- **Tab completion** for slash commands, profile/model names, and `@` file paths.
-- Type `@/path/to/image.png` anywhere in a message to attach an image.
-- **Ctrl+C** stops the stream; **Ctrl+D** exits.
+- **Send:** `Enter` sends, `Shift+Enter` adds a new line (in CLI use `Esc → Enter`). Flip this with `-e/--multiline`.
+- **Images:** Type `@/path/to/image.png` (CLI) or drag-and-drop/paste (Web UI) to attach an image.
+- **Completion (CLI):** Tab-complete slash commands, profiles, models, and `@` file paths.
+- **Stop:** **Ctrl+C** (CLI) or **Stop / Esc** (Web UI) cancels an in-progress generation.
 
 ### Slash Commands
 
 | Command | Description |
 |---|---|
-| `/quit` | Exit |
-| `/clear` | Clear history (keeps system prompt) |
-| `/undo` | Remove last user+assistant exchange |
+| `/help` | Show help summary |
+| `/quit`, `/exit` | Exit the application |
+| `/clear`, `/newchat` | Clear active chat history (keeps system prompt) |
+| `/undo` | Remove the last user/assistant exchange |
 | `/retry`, `/regen` | Resend the last user message (drops the old reply) |
 | `/edit` | Edit the last user message in `$EDITOR` and resend |
-| `/system [text]` | Show/set/disable system prompt |
-| `/ctx [n]` | Show/set context size |
+| `/list` | Preview active context window messages |
+| `/system [text]` | Show/set/clear the system prompt |
+| `/ctx [n]` | Show context window details or set size |
 | `/genmax [n]` | Show/set max generation tokens |
-| `/profile [name]` | Show/switch profile |
-| `/samplers ...` | Show/set/remove samplers, or `save` back to the config file |
+| `/profile [name]` | Show active profile or switch connection profile |
+| `/samplers ...` | Show/set/remove samplers, or `save` to config |
 | `/image [path]` | Attach an image from file path or clipboard |
-| `/save [file]` | Save the chat session |
+| `/save [file]` | Save active chat session |
 | `/load [file]` | Load a chat session |
 | `/sessions` | List saved session files |
-| `/copy` | Copy the last assistant response to the clipboard |
+| `/models [name]` | List available models or switch to one |
+| `/btw [msg]` | Send an ephemeral message outside the context window |
+| `/theme [mode]` | Switch Web UI theme (`dark` / `light`) |
+| `/copy` | Copy the last assistant response to clipboard |
 
 ## Development
 
@@ -91,7 +75,7 @@ uv run ruff check .      # lint
 uv run ruff format .     # format
 ```
 
-`pre-commit` hooks lint and format on `git commit`; run manually with `uv run pre-commit run --all-files`.
+`pre-commit` hooks lint and format on `git commit`.
 
 ## License
 
