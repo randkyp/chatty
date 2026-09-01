@@ -1,6 +1,6 @@
 [project]
 name = "chatty"
-version = "0.2.0"
+version = "0.2.1"
 description = "Interactive CLI chat client for OpenAI-compatible endpoints"
 readme = "README.md"
 requires-python = ">=3.11"

@@ -86,6 +86,11 @@ def test_cmd_clear(session, app_config):
     assert res.message == "History cleared."
     assert len(session.messages) == 0
 
+    session.add_user_message("hello again")
+    res2 = handle_command("/newchat", session, app_config)
+    assert res2.message == "History cleared."
+    assert len(session.messages) == 0
+
 
 def test_cmd_undo(session, app_config):
     session.add_user_message("hello")

@@ -130,6 +130,7 @@ COMMANDS: list[str] = [
     "/quit",
     "/exit",
     "/clear",
+    "/newchat",
     "/undo",
     "/system",
     "/ctx",
@@ -174,7 +175,7 @@ def handle_command(
         case "/quit" | "/exit":
             return CommandResult(quit=True)
 
-        case "/clear":
+        case "/clear" | "/newchat":
             session.clear()
             return CommandResult(message="History cleared.")
 
@@ -749,7 +750,7 @@ def _cmd_help() -> CommandResult:
     help_lines = [
         ("/help", "Show this help summary."),
         ("/quit, /exit", "Exit the application."),
-        ("/clear", "Clear active chat history (excluding system prompt)."),
+        ("/clear, /newchat", "Clear active chat history (excluding system prompt)."),
         ("/undo", "Remove the last user/assistant exchange."),
         ("/retry, /regen", "Resend the last user message (drops the old reply)."),
         ("/edit", "Edit the last user message in $EDITOR and resend."),
