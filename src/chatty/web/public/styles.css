@@ -158,11 +158,13 @@ body {
     border-collapse: collapse;
     margin: 1em 0;
     font-family: inherit;
+    text-align: left;
 }
 .message.assistant th, .message.assistant td {
     padding: 0 2ch 0 0;
     border: none;
     text-align: left;
+    vertical-align: top;
 }
 .message.assistant th {
     border-bottom: 1px dashed var(--accent);
