@@ -338,7 +338,10 @@ def _cmd_profile(arg: str, session: ChatSession, cfg: AppConfig) -> CommandResul
         session.ctx_size = new_profile.ctx_size
     if new_profile.genmax is not None:
         session.genmax = new_profile.genmax
-    return CommandResult(message=f"Switched to profile '{arg}'.")
+    return CommandResult(
+        message=f"Switched to profile '{arg}'.",
+        request_api_key=cfg.ephemeral_api_key_missing,
+    )
 
 
 def sync_token_counter(session: ChatSession, cfg: AppConfig) -> None:

@@ -129,7 +129,8 @@ def test_websocket_ephemeral_key_authenticates_tokenize_and_chat(tmp_path, respx
     )
 
     with TestClient(server.app).websocket_connect("/ws") as ws:
-        ws.receive_json()
+        assert ws.receive_json()["type"] == "welcome"
+        assert ws.receive_json()["type"] == "api_key_prompt"
         ws.send_json({"type": "api_key", "api_key": "old-secret"})
         assert "set" in ws.receive_json()["content"]
         ws.send_json({"type": "api_key", "api_key": "runtime-secret"})
@@ -165,8 +166,10 @@ def test_websocket_key_is_shared_with_existing_connection_and_reconnect(tmp_path
 
     with TestClient(server.app) as test_client:
         with test_client.websocket_connect("/ws") as first, test_client.websocket_connect("/ws") as second:
-            first.receive_json()
-            second.receive_json()
+            assert first.receive_json()["type"] == "welcome"
+            assert first.receive_json()["type"] == "api_key_prompt"
+            assert second.receive_json()["type"] == "welcome"
+            assert second.receive_json()["type"] == "api_key_prompt"
             first.send_json({"type": "api_key", "api_key": "shared-secret"})
             first.receive_json()
             second.send_json({"type": "message", "text": "hello"})
@@ -202,10 +205,34 @@ def test_websocket_bare_apikey_requests_password_control(tmp_path):
     profile = Profile(name="private", base_url="http://up", api_key_mode="ephemeral")
     server.app.state.cfg = AppConfig(config_path=tmp_path / "config.toml", profile=profile)
     with TestClient(server.app).websocket_connect("/ws") as ws:
-        ws.receive_json()
+        assert ws.receive_json()["type"] == "welcome"
+        assert ws.receive_json()["type"] == "api_key_prompt"
         ws.send_json({"type": "message", "text": "/apikey"})
         seen = [ws.receive_json() for _ in range(3)]
     assert [message["type"] for message in seen] == ["command_start", "command_end", "api_key_prompt"]
+
+
+def test_websocket_profile_switch_preprompts_for_missing_key(tmp_path):
+    config_path = tmp_path / "config.toml"
+    config_path.write_text(
+        '[profile.default]\nbase_url = "http://up"\n'
+        '[profile.private]\nbase_url = "http://private"\napi_key_mode = "ephemeral"\n'
+    )
+    server.app.state.cfg = AppConfig(
+        config_path=config_path,
+        profile=Profile(name="default", base_url="http://up"),
+    )
+    with TestClient(server.app).websocket_connect("/ws") as ws:
+        assert ws.receive_json()["type"] == "welcome"
+        ws.send_json({"type": "message", "text": "/profile private"})
+        seen = [ws.receive_json() for _ in range(4)]
+    assert [message["type"] for message in seen] == [
+        "command_start",
+        "command_end",
+        "system",
+        "api_key_prompt",
+    ]
+    assert "Switched to profile 'private'" in seen[2]["content"]
 
 
 def test_websocket_missing_ephemeral_key_never_calls_upstream(tmp_path, respx_mock):
@@ -220,7 +247,8 @@ def test_websocket_missing_ephemeral_key_never_calls_upstream(tmp_path, respx_mo
     server.app.state.cfg = AppConfig(config_path=tmp_path / "config.toml", profile=profile)
 
     with TestClient(server.app).websocket_connect("/ws") as ws:
-        ws.receive_json()
+        assert ws.receive_json()["type"] == "welcome"
+        assert ws.receive_json()["type"] == "api_key_prompt"
         ws.send_json({"type": "message", "text": "hello"})
         response = ws.receive_json()
     assert response["type"] == "error"

@@ -171,6 +171,24 @@ genmax = 0
     assert session.genmax == 0
 
 
+def test_cmd_profile_requests_missing_ephemeral_key_once(session, app_config, tmp_path):
+    config_file = tmp_path / "config.toml"
+    config_file.write_text(
+        '[profile.default]\nbase_url = "http://localhost:8080"\n'
+        '[profile.private]\nbase_url = "http://up"\napi_key_mode = "ephemeral"\n'
+    )
+    app_config.config_path = config_file
+
+    result = handle_command("/profile private", session, app_config)
+    assert result.request_api_key is True
+    assert "Switched to profile 'private'" in result.message
+
+    app_config.set_ephemeral_api_key("secret")
+    handle_command("/profile default", session, app_config)
+    result = handle_command("/profile private", session, app_config)
+    assert result.request_api_key is False
+
+
 def test_cmd_apikey_lifecycle(session, tmp_path):
     cfg = AppConfig(
         config_path=tmp_path / "config.toml",

@@ -185,6 +185,8 @@ def _handle_command_result(result: CommandResult, session: ChatSession, cfg: App
         return True
 
     if result.request_api_key:
+        if result.message:
+            print_system(result.message)
         api_key = get_api_key_input()
         if not api_key or not api_key.strip():
             print_system("API key unchanged.")
@@ -326,6 +328,9 @@ def main(argv: list[str] | None = None) -> None:
         session.genmax,
         enter_sends=cfg.enter_sends,
     )
+
+    if cfg.ephemeral_api_key_missing:
+        _handle_command_result(CommandResult(request_api_key=True), session, cfg)
 
     prompt_session = create_prompt_session(
         enter_sends=cfg.enter_sends,

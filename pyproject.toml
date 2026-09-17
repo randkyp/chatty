@@ -1,6 +1,6 @@
 [project]
 name = "chatty"
-version = "0.3.0"
+version = "0.4.0"
 description = "Interactive CLI chat client for OpenAI-compatible endpoints"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -83,4 +83,3 @@ addopts = "--cov=chatty --cov-report=term-missing --cov-fail-under=55"
 [tool.coverage.run]
 source = ["chatty"]
 omit = ["src/chatty/web/public/*"]
-

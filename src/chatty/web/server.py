@@ -179,6 +179,8 @@ async def _handle_message(
         await sender.send("command_end", "")
 
         if result.request_api_key:
+            if result.message:
+                await sender.send("system", result.message)
             await sender.send("api_key_prompt", "")
             return False
 
@@ -264,6 +266,8 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
     loop = asyncio.get_running_loop()
     sender = _Sender(websocket, loop)
     await sender.send("welcome", _welcome_text(cfg, session))
+    if cfg.ephemeral_api_key_missing:
+        await sender.send("api_key_prompt", "")
 
     current_task: asyncio.Task | None = None
     current_cancel: threading.Event | None = None

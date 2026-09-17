@@ -76,9 +76,13 @@ def test_apikey_prompt_sets_key_without_provider_validation(monkeypatch):
     monkeypatch.setattr(main, "print_system", messages.append)
     monkeypatch.setattr(main, "stream_chat", lambda **_: (_ for _ in ()).throw(AssertionError("must not validate")))
 
-    assert main._handle_command_result(CommandResult(request_api_key=True), session, cfg) is False
+    assert (
+        main._handle_command_result(CommandResult(message="Switched profile.", request_api_key=True), session, cfg)
+        is False
+    )
     assert cfg.effective_api_key == "new-secret"
     assert session._counter.api_key == "new-secret"
+    assert messages[0] == "Switched profile."
     assert "set" in messages[-1]
 
 
@@ -106,3 +110,34 @@ def test_stream_is_blocked_locally_without_ephemeral_key(monkeypatch):
 
     assert main.stream_and_render(cfg, [], 0) == ("", False, None)
     assert "/apikey" in errors[0]
+
+
+def test_main_preprompts_for_missing_ephemeral_key(monkeypatch):
+    from types import SimpleNamespace
+
+    cfg = AppConfig(
+        config_path=None,
+        profile=Profile(
+            name="private",
+            base_url="http://up",
+            api_key_mode="ephemeral",
+            model="m",
+            ctx_size=4096,
+            genmax=0,
+        ),
+    )
+    prompts = []
+    monkeypatch.setattr(main, "parse_args", lambda _: SimpleNamespace(web=False))
+    monkeypatch.setattr(main, "load_config", lambda _: cfg)
+    monkeypatch.setattr(main, "resolve_limits", lambda _: None)
+    monkeypatch.setattr(main, "print_welcome", lambda *args, **kwargs: None)
+    monkeypatch.setattr(main, "create_prompt_session", lambda **kwargs: object())
+    monkeypatch.setattr(main, "get_user_input", lambda _: None)
+    monkeypatch.setattr(main, "get_api_key_input", lambda: prompts.append("prompted") or "startup-secret")
+    monkeypatch.setattr(main, "print_system", lambda _: None)
+    monkeypatch.setattr(main, "close_clients", lambda: None)
+
+    main.main([])
+
+    assert prompts == ["prompted"]
+    assert cfg.effective_api_key == "startup-secret"

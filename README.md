@@ -43,7 +43,8 @@ api_key_mode = "ephemeral"
 model = "gpt-4o"
 ```
 
-Run `/apikey` and enter the key in the masked CLI or Web control. The key is never written to config, sessions,
+Chatty opens the masked CLI or Web key control when an ephemeral profile starts without a key, including after a profile
+switch. You can also run `/apikey` manually. The key is never written to config, sessions,
 browser storage, or chat history. It lasts until the CLI or web-server process exits; Web connections and reconnects
 share the current key for each profile. `/apikey status` reports whether one is set and `/apikey clear` removes it.
 Entering a key does not validate it automatically—use `/models` or send a message to test it with the provider.
