@@ -1,6 +1,6 @@
 import httpx
 
-from chatty.api import _auth_headers, fetch_model_metadata, stream_chat
+from chatty.api import _auth_headers, fetch_model_metadata, list_models, normalize_model_ids, stream_chat
 
 
 def test_auth_headers():
@@ -30,6 +30,34 @@ def test_fetch_model_metadata_error(respx_mock):
 
     meta = fetch_model_metadata("http://localhost:8080", None)
     assert meta == {}
+
+
+def test_normalize_model_ids_filters_duplicates_and_sorts_case_insensitively():
+    assert normalize_model_ids(["zeta", None, "", "  ", "Alpha", "alpha", "zeta", 42, "beta"]) == [
+        "Alpha",
+        "alpha",
+        "beta",
+        "zeta",
+    ]
+    assert normalize_model_ids({"id": "not-a-list"}) == []
+
+
+def test_list_models_normalizes_provider_response(respx_mock):
+    respx_mock.get("http://up/v1/models").respond(
+        200,
+        json={
+            "data": [
+                {"id": "Zulu"},
+                {"id": None},
+                {"missing": "id"},
+                "not-an-object",
+                {"id": "alpha"},
+                {"id": "Zulu"},
+            ]
+        },
+    )
+
+    assert list_models("http://up", None) == ["alpha", "Zulu"]
 
 
 def test_stream_chat_success(respx_mock):

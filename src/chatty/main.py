@@ -217,6 +217,21 @@ def _handle_command_result(result: CommandResult, session: ChatSession, cfg: App
                 print_error(f"Failed to copy to clipboard: {e}")
         return False
 
+    if result.model_choices is not None:
+        from chatty.commands import apply_model_choice
+        from chatty.ui import pick_model
+
+        choices = result.model_choices
+        if not choices:
+            if result.message:
+                print_system(result.message)
+            return False
+        selected = pick_model(choices, result.model_current)
+        if selected is None:
+            return False
+        print_system(apply_model_choice(cfg, selected))
+        return False
+
     if result.load_messages is not None:
         from rich.markdown import Markdown
 

@@ -49,8 +49,7 @@ def _build_session(cfg: AppConfig) -> ChatSession:
 
 def _welcome_text(cfg: AppConfig, session: ChatSession) -> str:
     gen_display = "unlimited" if session.genmax == 0 else session.genmax
-    model = cfg.profile.model or "(auto)"
-    return f"Welcome to chatty ({cfg.profile.name} - {model}). Context: {session.ctx_size}, Gen: {gen_display}."
+    return f"Welcome to chatty ({cfg.profile.name}). Context: {session.ctx_size}, Gen: {gen_display}."
 
 
 class _Sender:
@@ -60,7 +59,7 @@ class _Sender:
         self._ws = ws
         self._loop = loop
 
-    async def send(self, msg_type: str, content: str, **extra) -> None:
+    async def send(self, msg_type: str, content: object, **extra) -> None:
         payload = {"type": msg_type, "content": content, **extra}
         try:
             await self._ws.send_text(json.dumps(payload))
@@ -224,6 +223,13 @@ async def _handle_message(
                 await sender.send("system", "No assistant response to copy.")
             return False
 
+        if result.model_choices is not None:
+            if result.model_choices:
+                await sender.send("model_picker", result.model_choices, current=result.model_current or "")
+            elif result.message:
+                await sender.send("system", result.message)
+            return False
+
         if result.message:
             await sender.send("system", result.message)
         return False
@@ -301,6 +307,16 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                 cfg.set_ephemeral_api_key(api_key)
                 sync_token_counter(session, cfg)
                 await sender.send("system", f"Ephemeral API key set for profile '{cfg.profile.name}'.")
+                continue
+
+            if msg_type == "model_select":
+                from chatty.commands import apply_model_choice
+
+                model = req.get("model")
+                if not isinstance(model, str) or not model:
+                    continue
+                confirmation = apply_model_choice(cfg, model)
+                await sender.send("model_selected", confirmation)
                 continue
 
             if msg_type != "message":

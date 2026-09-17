@@ -154,6 +154,152 @@ function stopThinking() {
     }
 }
 
+// ── Model picker (transient listbox above the composer) ─────────────────────
+let modelPicker = null; // {models, current, filtered, highlight, element, listEl, selecting}
+
+function modelSubsequenceMatch(name, query) {
+    if (!query) return true;
+    const hay = name.toLowerCase();
+    const needle = query.toLowerCase();
+    let pos = 0;
+    for (const ch of needle) {
+        pos = hay.indexOf(ch, pos);
+        if (pos === -1) return false;
+        pos += 1;
+    }
+    return true;
+}
+
+function filterPickerModels(models, query) {
+    // Preserve alphabetical order; never relevance-rank.
+    return models.filter((m) => modelSubsequenceMatch(m, query));
+}
+
+function closeModelPickerLocal(clearFilter = true) {
+    if (!modelPicker) return;
+    modelPicker.element.remove();
+    modelPicker = null;
+    input.removeAttribute('role');
+    input.removeAttribute('aria-expanded');
+    input.removeAttribute('aria-controls');
+    input.removeAttribute('aria-autocomplete');
+    input.removeAttribute('aria-activedescendant');
+    if (clearFilter) {
+        input.value = '';
+        input.style.height = 'auto';
+    }
+    input.focus();
+}
+
+function renderModelPicker() {
+    if (!modelPicker) return;
+    const { filtered, highlight, listEl } = modelPicker;
+    listEl.innerHTML = '';
+    if (filtered.length === 0) {
+        const empty = document.createElement('li');
+        empty.className = 'model-picker-empty';
+        empty.textContent = 'No matching models';
+        empty.setAttribute('role', 'option');
+        empty.setAttribute('aria-selected', 'false');
+        listEl.appendChild(empty);
+        input.removeAttribute('aria-activedescendant');
+        return;
+    }
+    filtered.forEach((name, i) => {
+        const li = document.createElement('li');
+        li.id = `model-picker-option-${i}`;
+        li.className = 'model-picker-option' + (i === highlight ? ' highlighted' : '');
+        li.setAttribute('role', 'option');
+        li.setAttribute('aria-selected', i === highlight ? 'true' : 'false');
+        const marker = document.createElement('span');
+        marker.className = 'model-picker-marker';
+        marker.textContent = i === highlight ? '> ' : '  ';
+        const label = document.createElement('span');
+        label.textContent = name + (name === modelPicker.current ? ' (current)' : '');
+        li.append(marker, label);
+        li.addEventListener('click', () => {
+            modelPicker.highlight = i;
+            renderModelPicker();
+            sendModelPickerSelection();
+        });
+        li.addEventListener('touchend', (e) => {
+            e.preventDefault();
+            modelPicker.highlight = i;
+            renderModelPicker();
+            sendModelPickerSelection();
+        });
+        listEl.appendChild(li);
+    });
+    const active = listEl.children[highlight];
+    if (active) {
+        input.setAttribute('aria-activedescendant', active.id);
+        active.scrollIntoView({ block: 'nearest' });
+    }
+}
+
+function updateModelPickerFilter() {
+    if (!modelPicker) return;
+    const query = input.value;
+    const prevHighlighted = modelPicker.filtered[modelPicker.highlight];
+    modelPicker.filtered = filterPickerModels(modelPicker.models, query);
+    if (modelPicker.filtered.length === 0) {
+        modelPicker.highlight = -1;
+    } else if (prevHighlighted && modelPicker.filtered.includes(prevHighlighted)) {
+        modelPicker.highlight = modelPicker.filtered.indexOf(prevHighlighted);
+    } else {
+        modelPicker.highlight = 0;
+    }
+    renderModelPicker();
+}
+
+function moveModelPickerHighlight(delta) {
+    if (!modelPicker || modelPicker.filtered.length === 0) return;
+    const n = modelPicker.filtered.length;
+    modelPicker.highlight = (modelPicker.highlight + delta + n) % n;
+    renderModelPicker();
+}
+
+function sendModelPickerSelection() {
+    if (!modelPicker || modelPicker.filtered.length === 0) return;
+    if (modelPicker.highlight < 0 || modelPicker.selecting) return;
+    const model = modelPicker.filtered[modelPicker.highlight];
+    if (ws && ws.readyState === WebSocket.OPEN) {
+        modelPicker.selecting = true;
+        ws.send(JSON.stringify({ type: 'model_select', model }));
+    }
+    // Close only after the server acknowledges (model_selected).
+}
+
+function openModelPicker(models, current) {
+    closeModelPickerLocal(true);
+    const sorted = models.slice(); // server already sorts; preserve order
+    const initial = current && sorted.includes(current) ? sorted.indexOf(current) : 0;
+    const element = document.createElement('div');
+    element.id = 'model-picker';
+    const listEl = document.createElement('ul');
+    listEl.id = 'model-picker-listbox';
+    listEl.setAttribute('role', 'listbox');
+    listEl.setAttribute('aria-label', 'Models');
+    element.appendChild(listEl);
+    const wrapper = document.getElementById('input-wrapper');
+    wrapper.parentElement.insertBefore(element, wrapper);
+    modelPicker = {
+        models: sorted,
+        current: current || '',
+        filtered: sorted.slice(),
+        highlight: initial,
+        element,
+        listEl,
+        selecting: false,
+    };
+    input.setAttribute('role', 'combobox');
+    input.setAttribute('aria-expanded', 'true');
+    input.setAttribute('aria-controls', 'model-picker-listbox');
+    input.setAttribute('aria-autocomplete', 'list');
+    renderModelPicker();
+    input.focus();
+}
+
 // ── WebSocket with auto-reconnect ───────────────────────────────────────────
 function connect() {
     const scheme = window.location.protocol === 'https:' ? 'wss' : 'ws';
@@ -173,6 +319,7 @@ function connect() {
     ws.onclose = () => {
         setStreaming(false);
         stopThinking();
+        closeModelPickerLocal(true);
         if (manualClose) return;
 
         if (reconnectAttempts >= 5) {
@@ -300,6 +447,13 @@ function handleServerMessage(data) {
             currentAssistantDiv = null;
             currentAssistantContent = '';
             break;
+        case 'model_picker':
+            openModelPicker(data.content || [], data.current || '');
+            break;
+        case 'model_selected':
+            closeModelPickerLocal(true);
+            appendSystemMessage(data.content);
+            break;
     }
 }
 
@@ -318,6 +472,7 @@ function scheduleRender() {
 
 // ── Sending ─────────────────────────────────────────────────────────────────
 function sendMessage() {
+    if (modelPicker) return;
     const text = input.value.trim();
     if (!text && pendingImages.length === 0) return;
 
@@ -406,9 +561,35 @@ function renderImageChips() {
 input.addEventListener('input', function () {
     this.style.height = 'auto';
     this.style.height = `${this.scrollHeight}px`;
+    if (modelPicker) updateModelPickerFilter();
 });
 
 input.addEventListener('keydown', (e) => {
+    if (modelPicker) {
+        if (e.key === 'ArrowUp') {
+            e.preventDefault();
+            moveModelPickerHighlight(-1);
+            return;
+        }
+        if (e.key === 'ArrowDown') {
+            e.preventDefault();
+            moveModelPickerHighlight(1);
+            return;
+        }
+        if (e.key === 'Enter' && !e.shiftKey) {
+            e.preventDefault();
+            sendModelPickerSelection();
+            return;
+        }
+        if (e.key === 'Escape') {
+            e.preventDefault();
+            closeModelPickerLocal(true);
+            return;
+        }
+        // While open, disable history navigation and normal submission;
+        // typing continues to filter via the input event.
+        return;
+    }
     if (e.key === 'Enter' && !e.shiftKey) {
         e.preventDefault();
         sendMessage();

@@ -1,7 +1,12 @@
+from io import StringIO
+
+from prompt_toolkit.data_structures import Size
 from prompt_toolkit.document import Document
+from prompt_toolkit.input.defaults import create_pipe_input
+from prompt_toolkit.output.vt100 import Vt100_Output
 
 from chatty.config import AppConfig, Profile
-from chatty.ui import ChattyCompleter, _build_key_bindings, create_prompt_session
+from chatty.ui import ChattyCompleter, _build_key_bindings, create_prompt_session, model_picker_max_visible, pick_model
 
 
 def _completions(completer, text):
@@ -66,3 +71,41 @@ def test_build_key_bindings_modes():
 
 def test_create_prompt_session():
     assert create_prompt_session(enter_sends=True) is not None
+
+
+def _run_picker(keys, models, current=None):
+    rendered = StringIO()
+    output = Vt100_Output(
+        rendered,
+        lambda: Size(rows=24, columns=80),
+        term="xterm-256color",
+        enable_cpr=False,
+    )
+    with create_pipe_input() as pipe_input:
+        pipe_input.send_text(keys)
+        selected = pick_model(models, current, _input=pipe_input, _output=output)
+    return selected, rendered.getvalue()
+
+
+def test_model_picker_selects_current_and_single_choice():
+    assert _run_picker("\r", ["alpha", "beta"], current="beta")[0] == "beta"
+    assert _run_picker("\r", ["only"])[0] == "only"
+
+
+def test_model_picker_filters_and_only_arrows_move_highlight():
+    assert _run_picker("gm\r", ["alpha", "gamma", "gpt-4-mini"])[0] == "gamma"
+    assert _run_picker("\x1b[B\r", ["alpha", "beta", "gamma"])[0] == "beta"
+
+
+def test_model_picker_enter_with_no_matches_does_nothing_then_cancel_is_silent():
+    selected, _ = _run_picker("zzz\r\x03", ["alpha", "beta"])
+    assert selected is None
+
+
+def test_model_picker_preserves_scrollback_and_bounds_rows():
+    _, rendered = _run_picker("\x03", [f"model-{i}" for i in range(12)])
+    assert "\x1b[2J" not in rendered
+    assert "\x1b[?1049h" not in rendered
+    assert model_picker_max_visible(24) == 8
+    assert model_picker_max_visible(8) == 3
+    assert model_picker_max_visible(4) == 1

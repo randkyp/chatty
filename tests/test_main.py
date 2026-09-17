@@ -117,6 +117,30 @@ def test_load_history_does_not_clear_terminal_scrollback(capsys):
     assert "Session restored. 2 messages loaded (displaying last 2)." in output
 
 
+def test_model_picker_selection_uses_shared_confirmation(monkeypatch):
+    cfg = AppConfig(config_path=None, profile=Profile(name="p", base_url="http://x", model="old"))
+    messages = []
+    monkeypatch.setattr("chatty.ui.pick_model", lambda choices, current: "new")
+    monkeypatch.setattr(main, "print_system", messages.append)
+
+    main._handle_command_result(CommandResult(model_choices=["new", "old"], model_current="old"), ChatSession(), cfg)
+
+    assert cfg.profile.model == "new"
+    assert messages == ["Model: new"]
+
+
+def test_model_picker_cancellation_is_silent_and_does_not_mutate(monkeypatch):
+    cfg = AppConfig(config_path=None, profile=Profile(name="p", base_url="http://x", model="old"))
+    messages = []
+    monkeypatch.setattr("chatty.ui.pick_model", lambda choices, current: None)
+    monkeypatch.setattr(main, "print_system", messages.append)
+
+    main._handle_command_result(CommandResult(model_choices=["old"], model_current="old"), ChatSession(), cfg)
+
+    assert cfg.profile.model == "old"
+    assert messages == []
+
+
 def test_stream_is_blocked_locally_without_ephemeral_key(monkeypatch):
     cfg = AppConfig(
         config_path=None,

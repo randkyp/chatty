@@ -263,3 +263,42 @@ textarea {
     cursor: pointer;
     user-select: none;
 }
+
+/* Transient model picker listbox above the composer (full typewriter column). */
+#model-picker {
+    width: 100%;
+    box-sizing: border-box;
+    margin-top: 1em;
+    border: 1px solid var(--accent);
+    border-radius: 3px;
+    background: var(--bg);
+    color: var(--fg);
+}
+
+#model-picker-listbox {
+    list-style: none;
+    margin: 0;
+    padding: 0.25em 0;
+    max-height: calc(8 * 1.5em + 0.5em);
+    overflow-y: auto;
+}
+
+.model-picker-option,
+.model-picker-empty {
+    padding: 0 1ch;
+    line-height: 1.5;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    cursor: pointer;
+    color: var(--fg-user);
+}
+
+.model-picker-option.highlighted {
+    background: color-mix(in srgb, var(--fg) 12%, transparent);
+    color: var(--fg);
+}
+
+.model-picker-marker {
+    user-select: none;
+}

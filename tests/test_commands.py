@@ -5,6 +5,7 @@ from chatty.commands import (
     _del_nested,
     _parse_value,
     _set_nested,
+    filter_model_choices,
     handle_command,
 )
 from chatty.config import AppConfig, Profile
@@ -268,8 +269,8 @@ def test_cmd_image_file_not_found(session, app_config):
 
 
 def test_cmd_models_switch(session, app_config):
-    res = handle_command("/models gpt-4", session, app_config)
-    assert "Switched to model 'gpt-4'" in res.message
+    res = handle_command("/model gpt-4", session, app_config)
+    assert res.message == "Model: gpt-4"
     assert app_config.profile.model == "gpt-4"
 
 
@@ -279,7 +280,38 @@ def test_cmd_models_list(session, app_config, monkeypatch):
     app_config.profile.model = "model-2"
     monkeypatch.setattr(chatty.api, "list_models", lambda b, a: ["model-1", "model-2"])
     res = handle_command("/models", session, app_config)
-    assert res.message == "Available models:\n- model-1\n- model-2\nCurrent model: model-2"
+    assert res.message is None
+    assert res.model_choices == ["model-1", "model-2"]
+    assert res.model_current == "model-2"
+    assert app_config.profile.model == "model-2"
+
+
+def test_cmd_models_single_choice_still_opens_picker_without_mutating(session, app_config, monkeypatch):
+    app_config.profile.model = "current"
+    monkeypatch.setattr("chatty.api.list_models", lambda *_: ["only-choice"])
+
+    result = handle_command("/models", session, app_config)
+
+    assert result.model_choices == ["only-choice"]
+    assert result.model_current == "current"
+    assert app_config.profile.model == "current"
+
+
+def test_cmd_models_empty_catalog_retains_existing_error(session, app_config, monkeypatch):
+    monkeypatch.setattr("chatty.api.list_models", lambda *_: [])
+
+    result = handle_command("/models", session, app_config)
+
+    assert result.model_choices is None
+    assert result.message == "Failed to fetch models or no models found."
+
+
+def test_filter_model_choices_uses_ordered_subsequence_without_reordering():
+    models = ["Alpha", "gpt-4-mini", "gpt-4o", "omega"]
+
+    assert filter_model_choices(models, "G") == ["gpt-4-mini", "gpt-4o", "omega"]
+    assert filter_model_choices(models, "4o") == ["gpt-4o"]
+    assert filter_model_choices(models, "nope") == []
 
 
 def test_cmd_models_does_not_call_upstream_without_ephemeral_key(session, tmp_path, monkeypatch):

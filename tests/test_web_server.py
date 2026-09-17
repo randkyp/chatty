@@ -1,3 +1,5 @@
+import json
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -47,15 +49,13 @@ def test_build_session_configures_authenticated_token_counter(tmp_path):
     assert session._counter.api_key == "test-key"
 
 
-def test_websocket_welcome_uses_auto_for_no_model(tmp_path, respx_mock):
-    # Regression: web welcome must not interpolate a literal "None" model.
-    profile = Profile(name="test", base_url="http://up", model=None, ctx_size=4096, genmax=0)
+def test_websocket_welcome_does_not_persistently_show_model(tmp_path, respx_mock):
+    profile = Profile(name="test", base_url="http://up", model="private-model", ctx_size=4096, genmax=0)
     server.app.state.cfg = AppConfig(config_path=tmp_path / "c.toml", profile=profile)
     with TestClient(server.app).websocket_connect("/ws") as ws:
         welcome = ws.receive_json()
     assert welcome["type"] == "welcome"
-    assert "None" not in welcome["content"]
-    assert "(auto)" in welcome["content"]
+    assert "private-model" not in welcome["content"]
 
 
 def test_websocket_streams_response(client, respx_mock):
@@ -98,6 +98,48 @@ def test_websocket_command(client, respx_mock):
     assert "command_start" in types
     assert "command_end" in types
     assert any(m["type"] == "system" and "/help" in m["content"] for m in seen)
+
+
+def test_websocket_model_picker_selects_and_next_completion_uses_model(client, respx_mock):
+    respx_mock.get("http://up/v1/models").respond(
+        200,
+        json={"data": [{"id": "Zulu"}, {"id": "alpha"}, {"id": "Zulu"}, {"id": ""}]},
+    )
+    _mock_upstream(respx_mock, 'data: {"choices": [{"delta": {"content": "ok"}}]}\n\ndata: [DONE]\n')
+
+    with client.websocket_connect("/ws") as ws:
+        ws.receive_json()
+        ws.send_json({"type": "message", "text": "/models"})
+        messages = [ws.receive_json() for _ in range(3)]
+        assert [message["type"] for message in messages] == ["command_start", "command_end", "model_picker"]
+        assert messages[-1] == {
+            "type": "model_picker",
+            "content": ["alpha", "Zulu"],
+            "current": "test-model",
+        }
+
+        ws.send_json({"type": "model_select", "model": "alpha"})
+        assert ws.receive_json() == {"type": "model_selected", "content": "Model: alpha"}
+
+        ws.send_json({"type": "message", "text": "hello"})
+        for _ in range(10):
+            if ws.receive_json()["type"] == "stream_end":
+                break
+
+    chat_request = next(call.request for call in respx_mock.calls if call.request.url.path == "/v1/chat/completions")
+    assert json.loads(chat_request.content)["model"] == "alpha"
+
+
+def test_websocket_single_model_still_emits_picker(client, respx_mock):
+    respx_mock.get("http://up/v1/models").respond(200, json={"data": [{"id": "only"}]})
+
+    with client.websocket_connect("/ws") as ws:
+        ws.receive_json()
+        ws.send_json({"type": "message", "text": "/models"})
+        messages = [ws.receive_json() for _ in range(3)]
+
+    assert messages[-1]["type"] == "model_picker"
+    assert messages[-1]["content"] == ["only"]
 
 
 def test_websocket_cancel_without_generation_is_noop(client, respx_mock):
@@ -264,3 +306,16 @@ def test_web_assets_use_separate_non_persistent_password_control(client):
     assert "localStorage.setItem(key, JSON.stringify(value))" in script
     assert script.index("const apiKeyCommand") < script.index("inputHistory.push(text)")
     assert script.index("keyInput.value = ''") < script.index("type: 'api_key'")
+
+
+def test_web_assets_implement_accessible_transient_model_picker(client):
+    script = client.get("/static/app.js").text
+    styles = client.get("/static/styles.css").text
+
+    assert "role', 'combobox'" in script
+    assert "role', 'listbox'" in script
+    assert "aria-activedescendant" in script
+    assert "No matching models" in script
+    assert "if (modelPicker) return;" in script
+    assert "closeModelPickerLocal(true);" in script
+    assert "max-height: calc(8 * 1.5em + 0.5em)" in styles

@@ -77,16 +77,42 @@ def fetch_model_metadata(base_url: str, api_key: str | None) -> dict[str, Any]:
     return result
 
 
+def normalize_model_ids(raw_ids: object) -> list[str]:
+    """Retain non-empty string IDs, drop exact duplicates, sort case-insensitively.
+
+    Sorting preserves original spelling; ordering is deterministic with the
+    original string as a tie-breaker for case-insensitively equal IDs.
+    """
+    if not isinstance(raw_ids, list):
+        return []
+    seen: set[str] = set()
+    unique: list[str] = []
+    for item in raw_ids:
+        if not isinstance(item, str):
+            continue
+        if not item or not item.strip():
+            continue
+        if item in seen:
+            continue
+        seen.add(item)
+        unique.append(item)
+    unique.sort(key=lambda s: (s.lower(), s))
+    return unique
+
+
 def list_models(base_url: str, api_key: str | None) -> list[str]:
-    """Fetch available models from /v1/models."""
+    """Fetch available models from /v1/models, normalized centrally."""
     headers = _auth_headers(api_key)
     try:
         resp = httpx.get(f"{base_url}/v1/models", headers=headers, timeout=10.0)
         if resp.status_code == 200:
             data = resp.json()
             models = data.get("data", [])
-            return [m.get("id") for m in models if "id" in m]
-    except (httpx.HTTPError, json.JSONDecodeError, KeyError, ValueError):
+            if not isinstance(models, list):
+                return []
+            raw_ids = [m.get("id") for m in models if isinstance(m, dict)]
+            return normalize_model_ids(raw_ids)
+    except (httpx.HTTPError, json.JSONDecodeError, KeyError, ValueError, AttributeError):
         pass
     return []
 

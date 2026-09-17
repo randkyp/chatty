@@ -13,6 +13,7 @@ With --multiline / -e: multiline input; send with Meta+Enter
 from __future__ import annotations
 
 import re
+import shutil
 from typing import TYPE_CHECKING
 
 import tomlkit
@@ -27,6 +28,9 @@ from rich.theme import Theme
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
+
+    from prompt_toolkit.input.base import Input
+    from prompt_toolkit.output.base import Output
 
     from chatty.config import AppConfig
 
@@ -236,3 +240,177 @@ def print_welcome(
         console.print("[dim]Multiline input. Submit with Meta+Enter (Esc→Enter) or Ctrl+Enter.[/]")
     console.print("[dim]Type /quit to exit. Type /help to show all available commands.[/]")
     console.print()
+
+
+# ── Model picker (terminal) ──────────────────────────────────────────────
+
+MAX_PICKER_ROWS = 8
+
+
+def model_picker_max_visible(term_height: int | None = None) -> int:
+    """Max picker rows: at most eight, fewer when the terminal is short."""
+    if term_height is None:
+        try:
+            term_height = shutil.get_terminal_size((80, 24)).lines
+        except OSError:
+            term_height = 24
+    return max(1, min(MAX_PICKER_ROWS, term_height - 5))
+
+
+def pick_model(
+    models: list[str],
+    current: str | None = None,
+    *,
+    _input: Input | None = None,
+    _output: Output | None = None,
+) -> str | None:
+    """Interactive single-column picker over already-fetched *models*.
+
+    Returns the selected model id, or None when cancelled. Renders inline
+    (no alternate screen), erases itself afterward, and never refetches.
+    Filtering is case-insensitive ordered-subsequence; only Up/Down moves
+    the highlight; Enter selects; Escape/Ctrl+C cancels; Enter with no
+    matches does nothing.
+    """
+    if not models:
+        return None
+
+    from prompt_toolkit.application import Application
+    from prompt_toolkit.buffer import Buffer
+    from prompt_toolkit.layout import HSplit, Layout, Window
+    from prompt_toolkit.layout.controls import BufferControl, FormattedTextControl
+    from prompt_toolkit.layout.dimension import Dimension
+
+    from chatty.commands import filter_model_choices
+
+    max_visible = model_picker_max_visible()
+    state: dict[str, object] = {
+        "highlighted": current if current in models else models[0],
+    }
+
+    def _filtered() -> list[str]:
+        return filter_model_choices(models, filter_buffer.text)
+
+    def _highlight_index(filtered: list[str]) -> int:
+        highlighted = state.get("highlighted")
+        if highlighted in filtered:
+            return filtered.index(highlighted)  # type: ignore[arg-type]
+        return 0 if filtered else -1
+
+    filter_buffer = Buffer(multiline=False)
+
+    def _get_list_fragments():
+        filtered = _filtered()
+        # Keep highlight valid as the filter narrows.
+        if filtered:
+            if state.get("highlighted") not in filtered:
+                state["highlighted"] = filtered[0]
+        idx = _highlight_index(filtered)
+        if not filtered:
+            return [("class:picker-empty", "  No matching models")]
+        # Sliding window so the highlight stays visible.
+        total = len(filtered)
+        count = min(max_visible, total)
+        if idx < 0:
+            idx = 0
+        start = max(0, min(idx - count + 1, total - count))
+        if idx < start:
+            start = idx
+        end = min(total, start + count)
+        frags: list[tuple[str, str]] = []
+        for i in range(start, end):
+            name = filtered[i]
+            marker = "> " if i == idx else "  "
+            style = "class:picker-highlight" if i == idx else "class:picker-row"
+            frags.append((style, f"{marker}{name}\n"))
+        return frags
+
+    list_control = FormattedTextControl(text=_get_list_fragments, focusable=False)
+    list_window = Window(
+        content=list_control,
+        height=Dimension(max=max_visible, min=1),
+        wrap_lines=False,
+    )
+    input_control = BufferControl(buffer=filter_buffer, focusable=True)
+    input_window = Window(
+        content=input_control,
+        height=Dimension.exact(1),
+        wrap_lines=False,
+    )
+
+    from prompt_toolkit.layout import VSplit
+
+    root = HSplit(
+        [
+            VSplit([Window(content=FormattedTextControl(text="> "), width=Dimension.exact(2)), input_window]),
+            list_window,
+        ]
+    )
+    layout = Layout(container=root)
+    layout.focus(input_window)
+
+    kb = KeyBindings()
+
+    @kb.add("up")
+    def _(event):  # type: ignore[no-untyped-def]
+        filtered = _filtered()
+        if not filtered:
+            return
+        idx = _highlight_index(filtered)
+        idx = (idx - 1) % len(filtered)
+        state["highlighted"] = filtered[idx]
+
+    @kb.add("down")
+    def _(event):  # type: ignore[no-untyped-def]
+        filtered = _filtered()
+        if not filtered:
+            return
+        idx = _highlight_index(filtered)
+        idx = (idx + 1) % len(filtered)
+        state["highlighted"] = filtered[idx]
+
+    @kb.add("enter")
+    def _(event):  # type: ignore[no-untyped-def]
+        filtered = _filtered()
+        if not filtered:
+            return
+        idx = _highlight_index(filtered)
+        event.app.exit(result=filtered[idx])
+
+    @kb.add("escape")
+    def _(event):  # type: ignore[no-untyped-def]
+        event.app.exit(result=None)
+
+    @kb.add("c-c")
+    def _(event):  # type: ignore[no-untyped-def]
+        event.app.exit(result=None)
+
+    # Typing only filters; keep highlight stable and redraw.
+    def _on_text_changed(_buffer) -> None:  # type: ignore[no-untyped-def]
+        filtered = _filtered()
+        if filtered:
+            if state.get("highlighted") not in filtered:
+                state["highlighted"] = filtered[0]
+        try:
+            app.invalidate()
+        except NameError:
+            pass
+
+    try:
+        filter_buffer.on_text_changed += _on_text_changed  # type: ignore[attr-defined]
+    except AttributeError:
+        pass
+
+    app: Application[str | None] = Application(
+        layout=layout,
+        key_bindings=kb,
+        full_screen=False,
+        erase_when_done=True,
+        mouse_support=False,
+        input=_input,
+        output=_output,
+    )
+    try:
+        return app.run()
+    except (KeyboardInterrupt, EOFError):
+        return None

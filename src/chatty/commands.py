@@ -66,6 +66,35 @@ class CommandResult:
     remove_last_assistant: bool = False
     load_messages: list[dict[str, Any]] | None = None
     request_api_key: bool = False
+    # Structured model picker choices (bare /models). None means no picker.
+    model_choices: list[str] | None = None
+    model_current: str | None = None
+
+
+def apply_model_choice(cfg: AppConfig, model_id: str) -> str:
+    """Apply a model selection and return the confirmation message."""
+    cfg.profile.model = model_id
+    return f"Model: {model_id}"
+
+
+def model_matches_query(name: str, query: str) -> bool:
+    """Case-insensitive ordered-subsequence match (fuzzy, order-preserving)."""
+    if not query:
+        return True
+    name_low = name.lower()
+    query_low = query.lower()
+    pos = 0
+    for ch in query_low:
+        pos = name_low.find(ch, pos)
+        if pos == -1:
+            return False
+        pos += 1
+    return True
+
+
+def filter_model_choices(models: list[str], query: str) -> list[str]:
+    """Filter *models* by subsequence query, preserving alphabetical order."""
+    return [m for m in models if model_matches_query(m, query)]
 
 
 # ── Sampler helpers ────────────────────────────────────────────────────────
@@ -711,13 +740,9 @@ def _cmd_models(arg: str, cfg: AppConfig) -> CommandResult:
         models = list_models(cfg.profile.base_url, cfg.effective_api_key)
         if not models:
             return CommandResult(message="Failed to fetch models or no models found.")
-        current_model = cfg.profile.model or "(not set)"
-        return CommandResult(
-            message="Available models:\n" + "\n".join(f"- {m}" for m in models) + f"\nCurrent model: {current_model}"
-        )
+        return CommandResult(model_choices=models, model_current=cfg.profile.model)
     else:
-        cfg.profile.model = arg
-        return CommandResult(message=f"Switched to model '{arg}'.")
+        return CommandResult(message=apply_model_choice(cfg, arg))
 
 
 def _cmd_btw(arg: str) -> CommandResult:
