@@ -711,7 +711,10 @@ def _cmd_models(arg: str, cfg: AppConfig) -> CommandResult:
         models = list_models(cfg.profile.base_url, cfg.effective_api_key)
         if not models:
             return CommandResult(message="Failed to fetch models or no models found.")
-        return CommandResult(message="Available models:\n" + "\n".join(f"- {m}" for m in models))
+        current_model = cfg.profile.model or "(not set)"
+        return CommandResult(
+            message="Available models:\n" + "\n".join(f"- {m}" for m in models) + f"\nCurrent model: {current_model}"
+        )
     else:
         cfg.profile.model = arg
         return CommandResult(message=f"Switched to model '{arg}'.")

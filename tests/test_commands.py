@@ -276,10 +276,10 @@ def test_cmd_models_switch(session, app_config):
 def test_cmd_models_list(session, app_config, monkeypatch):
     import chatty.api
 
+    app_config.profile.model = "model-2"
     monkeypatch.setattr(chatty.api, "list_models", lambda b, a: ["model-1", "model-2"])
     res = handle_command("/models", session, app_config)
-    assert "model-1" in res.message
-    assert "model-2" in res.message
+    assert res.message == "Available models:\n- model-1\n- model-2\nCurrent model: model-2"
 
 
 def test_cmd_models_does_not_call_upstream_without_ephemeral_key(session, tmp_path, monkeypatch):
