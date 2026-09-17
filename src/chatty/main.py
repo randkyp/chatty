@@ -222,8 +222,6 @@ def _handle_command_result(result: CommandResult, session: ChatSession, cfg: App
 
         from chatty.ui import console, print_user
 
-        print("\033[H\033[J", end="", flush=True)
-
         loaded_to_show = result.load_messages[-50:]
         if loaded_to_show:
             for msg in loaded_to_show:

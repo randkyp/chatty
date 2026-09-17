@@ -99,6 +99,24 @@ def test_apikey_prompt_cancel_preserves_existing_key(monkeypatch):
     assert cfg.effective_api_key == "existing"
 
 
+def test_load_history_does_not_clear_terminal_scrollback(capsys):
+    cfg = AppConfig(config_path=None, profile=Profile(name="p", base_url="http://x"))
+    result = CommandResult(
+        load_messages=[
+            {"role": "user", "content": "earlier question"},
+            {"role": "assistant", "content": "earlier answer"},
+        ]
+    )
+
+    main._handle_command_result(result, ChatSession(), cfg)
+
+    output = capsys.readouterr().out
+    assert "\033[H\033[J" not in output
+    assert "earlier question" in output
+    assert "earlier answer" in output
+    assert "Session restored. 2 messages loaded (displaying last 2)." in output
+
+
 def test_stream_is_blocked_locally_without_ephemeral_key(monkeypatch):
     cfg = AppConfig(
         config_path=None,
