@@ -22,7 +22,7 @@ from typing import Any
 
 from rich.console import Console
 
-from chatty.chat_session import ChatSession
+from chatty.chat_session import ChatSession, TokenCounter
 from chatty.config import AppConfig, ProfileNotFoundError, save_profile
 from chatty.images import encode_image, encode_image_file, get_clipboard_image
 
@@ -327,6 +327,7 @@ def _cmd_profile(arg: str, session: ChatSession, cfg: AppConfig) -> CommandResul
     except ProfileNotFoundError as e:
         return CommandResult(message=str(e))
     new_profile = cfg.profile
+    session.set_counter(TokenCounter(base_url=new_profile.base_url, api_key=new_profile.api_key))
     session.system_prompt = new_profile.system_prompt
     if new_profile.ctx_size is not None:
         session.ctx_size = new_profile.ctx_size

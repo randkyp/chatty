@@ -37,6 +37,16 @@ def test_get_index(client):
     assert "Chatty" in r.text
 
 
+def test_build_session_configures_authenticated_token_counter(tmp_path):
+    profile = Profile(name="test", base_url="http://up", api_key="test-key")
+    cfg = AppConfig(config_path=tmp_path / "config.toml", profile=profile)
+
+    session = server._build_session(cfg)
+
+    assert session._counter.base_url == "http://up"
+    assert session._counter.api_key == "test-key"
+
+
 def test_websocket_welcome_uses_auto_for_no_model(tmp_path, respx_mock):
     # Regression: web welcome must not interpolate a literal "None" model.
     profile = Profile(name="test", base_url="http://up", model=None, ctx_size=4096, genmax=0)

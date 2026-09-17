@@ -43,7 +43,7 @@ def _build_session(cfg: AppConfig) -> ChatSession:
         ctx_size=cfg.profile.ctx_size if cfg.profile.ctx_size is not None else 8192,
         genmax=cfg.profile.genmax if cfg.profile.genmax is not None else 0,
     )
-    session.set_counter(TokenCounter(base_url=cfg.profile.base_url))
+    session.set_counter(TokenCounter(base_url=cfg.profile.base_url, api_key=cfg.profile.api_key))
     return session
 
 

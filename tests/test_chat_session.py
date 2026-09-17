@@ -14,6 +14,15 @@ def test_token_counter_server_success(respx_mock):
     counter = TokenCounter(base_url="http://localhost:8080")
     assert counter.count("hello") == 5
     assert counter._use_server is True
+    assert "Authorization" not in respx_mock.calls.last.request.headers
+
+
+def test_token_counter_authenticates_server_request(respx_mock):
+    respx_mock.post("http://localhost:8080/tokenize").respond(status_code=200, json={"tokens": [1]})
+
+    counter = TokenCounter(base_url="http://localhost:8080", api_key="test-key")
+    assert counter.count("hello") == 1
+    assert respx_mock.calls.last.request.headers["Authorization"] == "Bearer test-key"
 
 
 def test_token_counter_server_failure_falls_back_to_tiktoken(respx_mock):

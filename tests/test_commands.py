@@ -153,6 +153,7 @@ base_url = "http://localhost:8080"
 
 [profile.custom]
 base_url = "http://localhost:9000"
+api_key = "custom-key"
 system_prompt = "Custom Sys"
 ctx_size = 8192
 genmax = 0
@@ -163,6 +164,8 @@ genmax = 0
     assert "Switched to profile 'custom'" in res.message
     assert app_config.profile.name == "custom"
     assert app_config.profile.base_url == "http://localhost:9000"
+    assert session._counter.base_url == "http://localhost:9000"
+    assert session._counter.api_key == "custom-key"
     assert session.system_prompt == "Custom Sys"
     assert session.ctx_size == 8192
     assert session.genmax == 0

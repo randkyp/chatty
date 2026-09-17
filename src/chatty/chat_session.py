@@ -16,7 +16,7 @@ from typing import Any
 import httpx
 import tiktoken
 
-from chatty.api import get_client
+from chatty.api import _auth_headers, get_client
 
 # ── Token counting ─────────────────────────────────────────────────────────
 
@@ -26,6 +26,7 @@ class TokenCounter:
     """Counts tokens, preferring the server's /tokenize endpoint."""
 
     base_url: str
+    api_key: str | None = field(default=None, repr=False)
     _use_server: bool | None = field(default=None, repr=False)
     _tiktoken_enc: Any = field(default=None, repr=False)
     _cache: OrderedDict[tuple[bool | None, str], int] = field(default_factory=OrderedDict, repr=False)
@@ -37,9 +38,10 @@ class TokenCounter:
 
     def _post_tokenize(self, text: str) -> httpx.Response:
         """POST to the server's /tokenize endpoint, reusing a pooled client."""
-        return get_client(self.base_url, None).post(
+        return get_client(self.base_url, self.api_key).post(
             f"{self.base_url}/tokenize",
             json={"content": text},
+            headers=_auth_headers(self.api_key),
             timeout=5.0,
         )
 
