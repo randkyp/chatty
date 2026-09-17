@@ -49,7 +49,8 @@ def _build_session(cfg: AppConfig) -> ChatSession:
 
 def _welcome_text(cfg: AppConfig, session: ChatSession) -> str:
     gen_display = "unlimited" if session.genmax == 0 else session.genmax
-    return f"Welcome to chatty ({cfg.profile.name}). Context: {session.ctx_size}, Gen: {gen_display}."
+    model = cfg.profile.model or "(auto)"
+    return f"Welcome to chatty ({cfg.profile.name} - {model}). Context: {session.ctx_size}, Gen: {gen_display}."
 
 
 class _Sender:

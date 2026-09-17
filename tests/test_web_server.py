@@ -49,13 +49,22 @@ def test_build_session_configures_authenticated_token_counter(tmp_path):
     assert session._counter.api_key == "test-key"
 
 
-def test_websocket_welcome_does_not_persistently_show_model(tmp_path, respx_mock):
+def test_websocket_welcome_shows_profile_model(tmp_path):
     profile = Profile(name="test", base_url="http://up", model="private-model", ctx_size=4096, genmax=0)
     server.app.state.cfg = AppConfig(config_path=tmp_path / "c.toml", profile=profile)
     with TestClient(server.app).websocket_connect("/ws") as ws:
         welcome = ws.receive_json()
     assert welcome["type"] == "welcome"
-    assert "private-model" not in welcome["content"]
+    assert "test - private-model" in welcome["content"]
+
+
+def test_websocket_welcome_uses_auto_when_profile_has_no_model(tmp_path):
+    profile = Profile(name="test", base_url="http://up", model=None, ctx_size=4096, genmax=0)
+    server.app.state.cfg = AppConfig(config_path=tmp_path / "c.toml", profile=profile)
+    with TestClient(server.app).websocket_connect("/ws") as ws:
+        welcome = ws.receive_json()
+    assert welcome["type"] == "welcome"
+    assert "test - (auto)" in welcome["content"]
 
 
 def test_websocket_streams_response(client, respx_mock):
