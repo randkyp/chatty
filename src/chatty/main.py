@@ -136,6 +136,20 @@ def stream_and_render(
     return "".join(collected), interrupted, usage
 
 
+def _format_elapsed(elapsed: float) -> str:
+    """Format an elapsed request duration for the terminal status line."""
+    seconds = max(0, round(elapsed))
+    if seconds < 60:
+        return f"{seconds}s"
+
+    minutes, seconds = divmod(seconds, 60)
+    if minutes < 60:
+        return f"{minutes}m" if seconds == 0 else f"{minutes}m {seconds}s"
+
+    hours, minutes = divmod(minutes, 60)
+    return f"{hours}h {minutes}m" if minutes else f"{hours}h"
+
+
 def _report_tokens(session: ChatSession, usage: dict | None, elapsed: float) -> None:
     """Display token usage, preferring the server's real counts over an estimate."""
     if usage and usage.get("completion_tokens") is not None:
@@ -143,11 +157,11 @@ def _report_tokens(session: ChatSession, usage: dict | None, elapsed: float) -> 
         completion = usage.get("completion_tokens", 0)
         total = usage.get("total_tokens", prompt + completion)
         rate = f", {completion / elapsed:.1f} tok/s" if elapsed > 0 and completion else ""
-        print_system(f"[tokens: {total} ({prompt} ctx + {completion} gen){rate}]")
+        print_system(f"[tokens: {total} ({prompt} ctx + {completion} gen){rate}, {_format_elapsed(elapsed)}]")
         return
     token_count = session.get_token_count()
     if token_count >= 0:
-        print_system(f"[tokens: ~{token_count} / {session.context_budget} budget]")
+        print_system(f"[tokens: ~{token_count} / {session.context_budget} budget, {_format_elapsed(elapsed)}]")
 
 
 # ── Slash-command result handling ──────────────────────────────────────────

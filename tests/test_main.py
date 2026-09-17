@@ -38,6 +38,13 @@ def test_report_tokens_falls_back_to_estimate(monkeypatch):
     assert "budget" in msgs[0]
 
 
+def test_format_elapsed_uses_compact_duration_units():
+    assert main._format_elapsed(5.2) == "5s"
+    assert main._format_elapsed(60.0) == "1m"
+    assert main._format_elapsed(90.0) == "1m 30s"
+    assert main._format_elapsed(3_600.0) == "1h"
+
+
 def test_stream_and_render_collects_text(monkeypatch):
     # Mock the API stream and the rich console interactions.
     def fake_stream(**kwargs):
