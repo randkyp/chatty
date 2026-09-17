@@ -7,6 +7,7 @@
 [profile.default]
 base_url = "http://localhost:8080"
 # api_key = "sk-..."
+# api_key_mode = "ephemeral"  # Use instead of api_key; enter it with /apikey.
 # model = "my-model"
 # system_prompt = "You are a helpful assistant."
 # ctx_size = 8192
@@ -21,7 +22,7 @@ base_url = "http://localhost:8080"
 
 # [profile.openai]
 # base_url = "https://api.openai.com"
-# api_key = "sk-..."
+# api_key_mode = "ephemeral"
 # model = "gpt-4o"
 # system_prompt = "You are a helpful assistant."
 # ctx_size = 128000
@@ -29,6 +30,9 @@ base_url = "http://localhost:8080"
 #
 # [profile.openai.samplers]
 # temperature = 0.7
+
+# Ephemeral keys live only in the chatty CLI or web-server process. The Web UI
+# shares the current key for a profile across connections and reconnects.
 
 # ── Example: local vLLM / llama.cpp with nested sampler kwargs ─────────────
 

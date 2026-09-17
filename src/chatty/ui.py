@@ -16,7 +16,7 @@ import re
 from typing import TYPE_CHECKING
 
 import tomlkit
-from prompt_toolkit import PromptSession
+from prompt_toolkit import PromptSession, prompt
 from prompt_toolkit.completion import Completer, Completion, PathCompleter
 from prompt_toolkit.document import Document
 from prompt_toolkit.formatted_text import HTML
@@ -95,7 +95,6 @@ class ChattyCompleter(Completer):
     def __init__(self, cfg: AppConfig) -> None:
         self.cfg = cfg
         self._path_completer = PathCompleter(expanduser=True)
-        self._model_cache: list[str] | None = None
 
     def _profile_names(self) -> list[str]:
         try:
@@ -105,11 +104,11 @@ class ChattyCompleter(Completer):
             return []
 
     def _model_names(self) -> list[str]:
-        if self._model_cache is None:
-            from chatty.api import list_models
+        from chatty.api import list_models
 
-            self._model_cache = list_models(self.cfg.profile.base_url, self.cfg.profile.api_key)
-        return self._model_cache
+        if self.cfg.ephemeral_api_key_missing:
+            return []
+        return list_models(self.cfg.profile.base_url, self.cfg.effective_api_key)
 
     def _word_completions(self, options: Iterable[str], word: str) -> Iterable[Completion]:
         for opt in options:
@@ -169,6 +168,14 @@ def get_user_input(session: PromptSession) -> str | None:
     except KeyboardInterrupt:
         # Ctrl-C at the prompt: return empty to re-prompt.
         return ""
+
+
+def get_api_key_input() -> str | None:
+    """Read an API key without echoing it; return None when cancelled."""
+    try:
+        return prompt("API key (input hidden) › ", is_password=True)
+    except (EOFError, KeyboardInterrupt):
+        return None
 
 
 # ── Output rendering ──────────────────────────────────────────────────────

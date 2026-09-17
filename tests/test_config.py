@@ -1,3 +1,5 @@
+import copy
+
 import pytest
 
 from chatty.config import (
@@ -47,6 +49,7 @@ def test_load_profile_success():
     assert profile.ctx_size == 2048
     assert profile.genmax == 512
     assert profile.samplers == {"temperature": 0.5}
+    assert profile.api_key_mode == "stored"
 
 
 def test_load_profile_missing_base_url():
@@ -60,6 +63,32 @@ def test_load_profile_missing_profile():
     with pytest.raises(ProfileNotFoundError) as excinfo:
         _load_profile(raw_toml, "nonexistent")
     assert excinfo.value.available == ["good"]
+
+
+def test_load_ephemeral_profile_rejects_invalid_configuration():
+    profile = _load_profile(
+        {"profile": {"work": {"base_url": "http://up", "api_key_mode": "ephemeral"}}},
+        "work",
+    )
+    assert profile.api_key_mode == "ephemeral"
+    assert profile.api_key is None
+
+    with pytest.raises(ProfileNotFoundError, match="invalid api_key_mode"):
+        _load_profile({"profile": {"work": {"base_url": "http://up", "api_key_mode": "other"}}}, "work")
+
+    with pytest.raises(ProfileNotFoundError, match="cannot configure api_key"):
+        _load_profile(
+            {
+                "profile": {
+                    "work": {
+                        "base_url": "http://up",
+                        "api_key_mode": "ephemeral",
+                        "api_key": "must-not-be-stored",
+                    }
+                }
+            },
+            "work",
+        )
 
 
 def test_load_profile_by_name(tmp_path):
@@ -155,6 +184,31 @@ def test_switch_profile(tmp_path):
     assert cfg._raw["profile"]["b"]["base_url"] == "http://b"
 
 
+def test_ephemeral_keys_survive_switches_and_are_shared_by_web_copies(tmp_path):
+    from chatty.config import AppConfig, Profile
+
+    cfg_path = tmp_path / "config.toml"
+    cfg_path.write_text(
+        '[profile.a]\nbase_url = "http://a"\napi_key_mode = "ephemeral"\n'
+        '[profile.b]\nbase_url = "http://b"\napi_key_mode = "ephemeral"\n'
+    )
+    cfg = AppConfig(
+        config_path=cfg_path,
+        profile=Profile(name="a", base_url="http://a", api_key_mode="ephemeral"),
+    )
+    cfg.set_ephemeral_api_key("key-a")
+    copied = copy.deepcopy(cfg)
+    assert copied.effective_api_key == "key-a"
+
+    cfg.switch_profile("b")
+    cfg.set_ephemeral_api_key("key-b")
+    cfg.switch_profile("a")
+    assert cfg.effective_api_key == "key-a"
+
+    copied.clear_ephemeral_api_key()
+    assert cfg.effective_api_key is None
+
+
 def test_switch_profile_missing_raises(tmp_path):
     from chatty.config import AppConfig, Profile
 
@@ -178,6 +232,33 @@ def test_resolve_limits_uses_metadata(respx_mock):
     assert cfg.profile.model == "m1"
 
 
+def test_resolve_limits_skips_remote_metadata_without_ephemeral_key(respx_mock):
+    from chatty.config import AppConfig, Profile, resolve_limits
+
+    cfg = AppConfig(
+        config_path=None,
+        profile=Profile(name="p", base_url="http://up", api_key_mode="ephemeral"),
+    )
+    resolve_limits(cfg)
+    assert cfg.profile.ctx_size == 8192
+    assert cfg.profile.genmax == 0
+    assert cfg.profile.model == "default"
+    assert not respx_mock.calls
+
+
+def test_resolve_limits_uses_effective_ephemeral_key(respx_mock):
+    from chatty.config import AppConfig, Profile, resolve_limits
+
+    respx_mock.get("http://up/v1/models").respond(200, json={"data": [{"id": "m"}]})
+    cfg = AppConfig(
+        config_path=None,
+        profile=Profile(name="p", base_url="http://up", api_key_mode="ephemeral"),
+    )
+    cfg.set_ephemeral_api_key("runtime-secret")
+    resolve_limits(cfg)
+    assert respx_mock.calls.last.request.headers["Authorization"] == "Bearer runtime-secret"
+
+
 def test_save_profile_skips_none_sampler(tmp_path):
     from chatty.config import AppConfig, Profile
 
@@ -189,3 +270,25 @@ def test_save_profile_skips_none_sampler(tmp_path):
     text = cfg_path.read_text()
     assert "temperature" in text
     assert "stop" not in text
+
+
+def test_save_profile_never_serializes_ephemeral_key(tmp_path):
+    from chatty.config import AppConfig, Profile
+
+    cfg_path = tmp_path / "config.toml"
+    cfg_path.write_text('[profile.default]\nbase_url = "http://x"\napi_key_mode = "ephemeral"\n')
+    cfg = AppConfig(
+        config_path=cfg_path,
+        profile=Profile(
+            name="default",
+            base_url="http://x",
+            api_key="must-also-not-leak",
+            api_key_mode="ephemeral",
+        ),
+    )
+    cfg.set_ephemeral_api_key("runtime-secret")
+    save_profile(cfg)
+    assert "runtime-secret" not in cfg_path.read_text()
+    assert "must-also-not-leak" not in cfg_path.read_text()
+    assert "api_key =" not in cfg_path.read_text()
+    assert 'api_key_mode = "ephemeral"' in cfg_path.read_text()

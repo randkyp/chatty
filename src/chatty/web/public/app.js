@@ -7,6 +7,7 @@
 const history = document.getElementById('chat-history');
 const input = document.getElementById('user-input');
 const stopButton = document.getElementById('stop-button');
+const inputWrapper = document.getElementById('input-wrapper');
 
 let ws = null;
 let reconnectDelay = 500;            // ms, backs off to a cap
@@ -93,6 +94,52 @@ function appendAssistantMessage(markdownText) {
     history.appendChild(div);
 }
 
+function showApiKeyPrompt() {
+    document.getElementById('api-key-form')?.remove();
+
+    const form = document.createElement('form');
+    form.id = 'api-key-form';
+    form.autocomplete = 'off';
+
+    const label = document.createElement('label');
+    label.textContent = 'API key › ';
+    label.htmlFor = 'api-key-input';
+
+    const keyInput = document.createElement('input');
+    keyInput.id = 'api-key-input';
+    keyInput.type = 'password';
+    keyInput.autocomplete = 'off';
+    keyInput.spellcheck = false;
+
+    const submit = document.createElement('button');
+    submit.type = 'submit';
+    submit.textContent = 'Set';
+
+    const cancel = document.createElement('button');
+    cancel.type = 'button';
+    cancel.textContent = 'Cancel';
+    cancel.addEventListener('click', () => form.remove());
+
+    form.append(label, keyInput, submit, cancel);
+    inputWrapper.parentElement.insertBefore(form, inputWrapper);
+    form.addEventListener('submit', (event) => {
+        event.preventDefault();
+        const apiKey = keyInput.value;
+        keyInput.value = '';
+        form.remove();
+        if (!apiKey) {
+            appendSystemMessage('API key unchanged.');
+            return;
+        }
+        if (ws && ws.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify({ type: 'api_key', api_key: apiKey }));
+        } else {
+            appendSystemMessage('Not connected to server.', 'error');
+        }
+    });
+    keyInput.focus();
+}
+
 
 
 function setStreaming(on) {
@@ -109,7 +156,8 @@ function stopThinking() {
 
 // ── WebSocket with auto-reconnect ───────────────────────────────────────────
 function connect() {
-    ws = new WebSocket(`ws://${window.location.host}/ws`);
+    const scheme = window.location.protocol === 'https:' ? 'wss' : 'ws';
+    ws = new WebSocket(`${scheme}://${window.location.host}/ws`);
 
     ws.onopen = () => {
         reconnectDelay = 500;
@@ -168,6 +216,9 @@ function handleServerMessage(data) {
             break;
         case 'theme':
             break; // handled client-side on send
+        case 'api_key_prompt':
+            showApiKeyPrompt();
+            break;
         case 'copy_to_clipboard':
             navigator.clipboard.writeText(data.content)
                 .then(() => appendSystemMessage('Last response copied to clipboard.'))
@@ -269,6 +320,22 @@ function scheduleRender() {
 function sendMessage() {
     const text = input.value.trim();
     if (!text && pendingImages.length === 0) return;
+
+    // Never render, persist, or transport a possible `/apikey <secret>`
+    // argument. Only the documented non-secret subcommands use this input.
+    const apiKeyCommand = text.match(/^\/apikey(?:\s+(.+))?$/i);
+    if (apiKeyCommand) {
+        const argument = (apiKeyCommand[1] || '').trim().toLowerCase();
+        if (argument && argument !== 'status' && argument !== 'clear') {
+            appendUserMessage('/apikey [argument rejected]');
+            appendSystemMessage('Use bare /apikey and the dedicated password field. Never pass a key as an argument.', 'error');
+            pendingImages.length = 0;
+            renderImageChips();
+            input.value = '';
+            input.style.height = 'auto';
+            return;
+        }
+    }
 
     if (text) {
         appendUserMessage(text);

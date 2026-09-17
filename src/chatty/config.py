@@ -26,6 +26,32 @@ class ProfileNotFoundError(Exception):
         self.available = available or []
 
 
+API_KEY_MODES = {"stored", "ephemeral"}
+EPHEMERAL_KEY_REQUIRED = "This profile needs an API key. Run /apikey to enter it for this process."
+
+
+@dataclass
+class EphemeralApiKeys:
+    """Process-memory API keys shared by configs derived from one app config."""
+
+    _keys: dict[str, str] = field(default_factory=dict, repr=False)
+
+    def __deepcopy__(self, memo: dict[int, Any]) -> EphemeralApiKeys:
+        # WebSocket connections deepcopy AppConfig for their mutable profile
+        # state, but all connections must see the same process-memory keys.
+        memo[id(self)] = self
+        return self
+
+    def get(self, profile_name: str) -> str | None:
+        return self._keys.get(profile_name)
+
+    def set(self, profile_name: str, api_key: str) -> None:
+        self._keys[profile_name] = api_key
+
+    def clear(self, profile_name: str) -> None:
+        self._keys.pop(profile_name, None)
+
+
 # ── Default config template ────────────────────────────────────────────────
 
 DEFAULT_CONFIG = """\
@@ -36,6 +62,7 @@ DEFAULT_CONFIG = """\
 [profile.default]
 base_url = "http://localhost:8080"
 # api_key = ""
+# api_key_mode = "ephemeral"  # Prompt with /apikey; never stored on disk.
 # model = ""
 # system_prompt = "You are a helpful assistant."
 # ctx_size = 8192
@@ -56,7 +83,8 @@ class Profile:
 
     name: str
     base_url: str
-    api_key: str | None = None
+    api_key: str | None = field(default=None, repr=False)
+    api_key_mode: str = "stored"
     model: str | None = None
     system_prompt: str | None = None
     ctx_size: int | None = None
@@ -76,6 +104,28 @@ class AppConfig:
     autosave: bool = False
     # Stores the raw parsed TOML so we can write back on /save.
     _raw: dict[str, Any] = field(default_factory=dict, repr=False)
+    _ephemeral_api_keys: EphemeralApiKeys = field(default_factory=EphemeralApiKeys, repr=False)
+
+    @property
+    def effective_api_key(self) -> str | None:
+        """Return the configured or process-memory key for the active profile."""
+        if self.profile.api_key_mode == "ephemeral":
+            return self._ephemeral_api_keys.get(self.profile.name)
+        return self.profile.api_key
+
+    @property
+    def ephemeral_api_key_missing(self) -> bool:
+        return self.profile.api_key_mode == "ephemeral" and self.effective_api_key is None
+
+    def set_ephemeral_api_key(self, api_key: str) -> None:
+        if self.profile.api_key_mode != "ephemeral":
+            raise ValueError('API key entry is only available for profiles using api_key_mode = "ephemeral".')
+        self._ephemeral_api_keys.set(self.profile.name, api_key)
+
+    def clear_ephemeral_api_key(self) -> None:
+        if self.profile.api_key_mode != "ephemeral":
+            raise ValueError('API key entry is only available for profiles using api_key_mode = "ephemeral".')
+        self._ephemeral_api_keys.clear(self.profile.name)
 
     def switch_profile(self, name: str) -> None:
         """Load *name* from this config's file and make it the active profile.
@@ -111,10 +161,18 @@ def _load_profile(raw: dict[str, Any], name: str) -> Profile:
     data = profiles[name]
     if "base_url" not in data:
         raise ProfileNotFoundError(f"Profile '{name}' is missing required field 'base_url'.")
+    api_key_mode = data.get("api_key_mode", "stored")
+    if api_key_mode not in API_KEY_MODES:
+        raise ProfileNotFoundError(
+            f"Profile '{name}' has invalid api_key_mode {api_key_mode!r}. Expected 'stored' or 'ephemeral'."
+        )
+    if api_key_mode == "ephemeral" and data.get("api_key") is not None:
+        raise ProfileNotFoundError(f"Profile '{name}' cannot configure api_key when api_key_mode is 'ephemeral'.")
     return Profile(
         name=name,
         base_url=data["base_url"].rstrip("/"),
         api_key=data.get("api_key"),
+        api_key_mode=api_key_mode,
         model=data.get("model"),
         system_prompt=data.get("system_prompt"),
         ctx_size=data.get("ctx_size"),
@@ -249,7 +307,9 @@ def resolve_limits(cfg: AppConfig) -> None:
     if p.ctx_size and p.genmax and p.model:
         return  # Everything already set, skip network call.
 
-    meta = fetch_model_metadata(p.base_url, p.api_key)
+    # An opted-in ephemeral profile must not make anonymous requests while its
+    # process-memory credential is absent.
+    meta = {} if cfg.ephemeral_api_key_missing else fetch_model_metadata(p.base_url, cfg.effective_api_key)
 
     if p.ctx_size is None:
         p.ctx_size = meta.get("ctx_size", 8192)
@@ -277,9 +337,16 @@ def save_profile(cfg: AppConfig) -> None:
     p_table = profiles[p.name]
     p_table["base_url"] = p.base_url
 
-    if p.api_key is not None:
+    if p.api_key_mode == "ephemeral":
+        p_table["api_key_mode"] = "ephemeral"
+    elif "api_key_mode" in p_table:
+        del p_table["api_key_mode"]
+
+    if p.api_key_mode == "ephemeral" and "api_key" in p_table:
+        del p_table["api_key"]
+    elif p.api_key_mode != "ephemeral" and p.api_key is not None:
         p_table["api_key"] = p.api_key
-    elif "api_key" in p_table:
+    elif p.api_key_mode != "ephemeral" and "api_key" in p_table:
         del p_table["api_key"]
 
     if p.model is not None:

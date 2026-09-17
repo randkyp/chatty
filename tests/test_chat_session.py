@@ -25,6 +25,12 @@ def test_token_counter_authenticates_server_request(respx_mock):
     assert respx_mock.calls.last.request.headers["Authorization"] == "Bearer test-key"
 
 
+def test_token_counter_can_force_local_counting(respx_mock):
+    counter = TokenCounter(base_url="http://localhost:8080", server_enabled=False)
+    assert counter.count("hello") == 1
+    assert not respx_mock.calls
+
+
 def test_token_counter_server_failure_falls_back_to_tiktoken(respx_mock):
     # Mock /tokenize endpoint returning 404
     respx_mock.post("http://localhost:8080/tokenize").respond(status_code=404)

@@ -38,6 +38,21 @@ def test_completer_models(tmp_path, monkeypatch):
     assert out == ["gpt-4o-mini"]
 
 
+def test_completer_models_waits_for_ephemeral_key(tmp_path, monkeypatch):
+    cfg = _cfg(tmp_path)
+    cfg.profile.api_key_mode = "ephemeral"
+    calls = []
+    monkeypatch.setattr("chatty.api.list_models", lambda base_url, api_key: calls.append(api_key) or ["model"])
+    completer = ChattyCompleter(cfg)
+
+    assert _completions(completer, "/models m") == []
+    assert calls == []
+
+    cfg.set_ephemeral_api_key("runtime-secret")
+    assert _completions(completer, "/models m") == ["model"]
+    assert calls == ["runtime-secret"]
+
+
 def test_completer_path_does_not_crash(tmp_path):
     completer = ChattyCompleter(_cfg(tmp_path))
     # Should delegate to PathCompleter without raising.

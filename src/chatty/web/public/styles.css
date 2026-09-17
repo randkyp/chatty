@@ -178,6 +178,34 @@ body {
     scroll-margin-top: 40px; /* Target for scrolling user message to top */
 }
 
+#api-key-form {
+    display: flex;
+    align-items: center;
+    gap: 1ch;
+    margin-top: 1em;
+    color: var(--fg-user);
+}
+
+#api-key-form input {
+    flex-grow: 1;
+    min-width: 0;
+    background: transparent;
+    border: none;
+    border-bottom: 1px dashed var(--accent);
+    color: var(--fg-user);
+    font: inherit;
+    outline: none;
+}
+
+#api-key-form button {
+    background: transparent;
+    border: 1px solid var(--accent);
+    border-radius: 3px;
+    color: var(--fg);
+    cursor: pointer;
+    font: inherit;
+}
+
 .prompt-char {
     margin-right: 1ch;
     color: var(--fg-user);

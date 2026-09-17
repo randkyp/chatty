@@ -34,6 +34,24 @@ chatty --web                      # launch web UI (default: http://127.0.0.1:800
 **Config:** Resolved from `~/.config/chatty/config.toml`, then `./config.toml`. Overridable with `-c/--config`.
 **Sessions:** `/save [file]` and `/load [file]` default to `~/.config/chatty/session.json(l)`. Pass `--autosave` to save on exit.
 
+Profiles use stored keys by default. To keep a provider key only in process memory, opt in explicitly:
+
+```toml
+[profile.openai]
+base_url = "https://api.openai.com"
+api_key_mode = "ephemeral"
+model = "gpt-4o"
+```
+
+Run `/apikey` and enter the key in the masked CLI or Web control. The key is never written to config, sessions,
+browser storage, or chat history. It lasts until the CLI or web-server process exits; Web connections and reconnects
+share the current key for each profile. `/apikey status` reports whether one is set and `/apikey clear` removes it.
+Entering a key does not validate it automatically—use `/models` or send a message to test it with the provider.
+
+The Web control sends the key in plaintext inside the WebSocket connection. Use HTTPS/WSS whenever the browser-to-server
+connection crosses an untrusted network. Ephemeral mode is explicit profile opt-in; it does not restrict which connected
+browser may replace the profile's process-wide key.
+
 ### Input Features
 
 - **Send:** `Enter` sends, `Shift+Enter` adds a new line (in CLI use `Esc → Enter`). Flip this with `-e/--multiline`.
@@ -56,6 +74,7 @@ chatty --web                      # launch web UI (default: http://127.0.0.1:800
 | `/ctx [n]` | Show context window details or set size |
 | `/genmax [n]` | Show/set max generation tokens |
 | `/profile [name]` | Show active profile or switch connection profile |
+| `/apikey [status\|clear]` | Enter, inspect, or clear an ephemeral profile key |
 | `/samplers ...` | Show/set/remove samplers, or `save` to config |
 | `/image [path]` | Attach an image from file path or clipboard |
 | `/save [file]` | Save active chat session |

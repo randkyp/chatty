@@ -171,6 +171,33 @@ genmax = 0
     assert session.genmax == 0
 
 
+def test_cmd_apikey_lifecycle(session, tmp_path):
+    cfg = AppConfig(
+        config_path=tmp_path / "config.toml",
+        profile=Profile(name="private", base_url="http://up", api_key_mode="ephemeral"),
+    )
+
+    assert handle_command("/apikey", session, cfg).request_api_key is True
+    assert "not set" in handle_command("/apikey status", session, cfg).message
+    cfg.set_ephemeral_api_key("secret")
+    assert "is set" in handle_command("/apikey status", session, cfg).message
+
+    rejected = handle_command("/apikey secret-on-command-line", session, cfg)
+    assert "Never pass a key as an argument" in rejected.message
+    assert cfg.effective_api_key == "secret"
+
+    cleared = handle_command("/apikey clear", session, cfg)
+    assert "cleared" in cleared.message
+    assert cfg.effective_api_key is None
+    assert session._counter.server_enabled is False
+
+
+def test_cmd_apikey_rejects_stored_and_anonymous_profiles(session, app_config):
+    result = handle_command("/apikey", session, app_config)
+    assert "only available" in result.message
+    assert result.request_api_key is False
+
+
 def test_cmd_samplers(session, app_config):
     # Show samplers
     res = handle_command("/samplers show", session, app_config)
@@ -235,6 +262,16 @@ def test_cmd_models_list(session, app_config, monkeypatch):
     res = handle_command("/models", session, app_config)
     assert "model-1" in res.message
     assert "model-2" in res.message
+
+
+def test_cmd_models_does_not_call_upstream_without_ephemeral_key(session, tmp_path, monkeypatch):
+    cfg = AppConfig(
+        config_path=tmp_path / "config.toml",
+        profile=Profile(name="private", base_url="http://up", api_key_mode="ephemeral"),
+    )
+    monkeypatch.setattr("chatty.api.list_models", lambda *_: pytest.fail("unexpected upstream request"))
+    result = handle_command("/models", session, cfg)
+    assert "Run /apikey" in result.message
 
 
 def test_cmd_btw(session, app_config):

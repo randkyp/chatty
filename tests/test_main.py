@@ -1,5 +1,9 @@
+import pytest
+
 import chatty.main as main
 from chatty.chat_session import ChatSession
+from chatty.commands import CommandResult
+from chatty.config import AppConfig, Profile
 
 
 def test_last_assistant_text():
@@ -54,10 +58,51 @@ def test_stream_and_render_collects_text(monkeypatch):
 
     monkeypatch.setattr(main, "stream_chat", lambda **kw: fake_stream(**kw))
 
-    from chatty.config import AppConfig, Profile
-
     cfg = AppConfig(config_path=None, profile=Profile(name="p", base_url="http://x"), raw_output=True)
     text, interrupted, usage = main.stream_and_render(cfg, [{"role": "user", "content": "hi"}], genmax=0)
     assert text == "Hello world"
     assert interrupted is False
     assert usage == {"completion_tokens": 2}
+
+
+def test_apikey_prompt_sets_key_without_provider_validation(monkeypatch):
+    cfg = AppConfig(
+        config_path=None,
+        profile=Profile(name="private", base_url="http://up", api_key_mode="ephemeral"),
+    )
+    session = ChatSession()
+    messages = []
+    monkeypatch.setattr(main, "get_api_key_input", lambda: "new-secret")
+    monkeypatch.setattr(main, "print_system", messages.append)
+    monkeypatch.setattr(main, "stream_chat", lambda **_: (_ for _ in ()).throw(AssertionError("must not validate")))
+
+    assert main._handle_command_result(CommandResult(request_api_key=True), session, cfg) is False
+    assert cfg.effective_api_key == "new-secret"
+    assert session._counter.api_key == "new-secret"
+    assert "set" in messages[-1]
+
+
+def test_apikey_prompt_cancel_preserves_existing_key(monkeypatch):
+    cfg = AppConfig(
+        config_path=None,
+        profile=Profile(name="private", base_url="http://up", api_key_mode="ephemeral"),
+    )
+    cfg.set_ephemeral_api_key("existing")
+    monkeypatch.setattr(main, "get_api_key_input", lambda: "")
+    monkeypatch.setattr(main, "print_system", lambda _: None)
+
+    main._handle_command_result(CommandResult(request_api_key=True), ChatSession(), cfg)
+    assert cfg.effective_api_key == "existing"
+
+
+def test_stream_is_blocked_locally_without_ephemeral_key(monkeypatch):
+    cfg = AppConfig(
+        config_path=None,
+        profile=Profile(name="private", base_url="http://up", api_key_mode="ephemeral"),
+    )
+    errors = []
+    monkeypatch.setattr(main, "print_error", errors.append)
+    monkeypatch.setattr(main, "stream_chat", lambda **_: pytest.fail("unexpected upstream request"))
+
+    assert main.stream_and_render(cfg, [], 0) == ("", False, None)
+    assert "/apikey" in errors[0]

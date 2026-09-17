@@ -17,18 +17,18 @@ import httpx
 # Connect quickly-failing but allow unbounded streaming reads.
 STREAM_TIMEOUT = httpx.Timeout(connect=10.0, read=None, write=10.0, pool=10.0)
 
-# One client per (base_url, api_key) so TLS handshakes/connections are reused
-# across requests within a session. HTTP/2 is enabled where the server supports it.
-_CLIENT_CACHE: dict[tuple[str, str | None], httpx.Client] = {}
+# One client per endpoint so TLS handshakes/connections are reused. Credentials
+# are request headers, so they do not belong in the cache key (and therefore do
+# not linger there after an ephemeral key is cleared or replaced).
+_CLIENT_CACHE: dict[str, httpx.Client] = {}
 
 
 def get_client(base_url: str, api_key: str | None) -> httpx.Client:
     """Return a cached httpx.Client for this endpoint, creating one if needed."""
-    key = (base_url, api_key)
-    client = _CLIENT_CACHE.get(key)
+    client = _CLIENT_CACHE.get(base_url)
     if client is None or client.is_closed:
         client = httpx.Client(timeout=STREAM_TIMEOUT, http2=False)
-        _CLIENT_CACHE[key] = client
+        _CLIENT_CACHE[base_url] = client
     return client
 
 

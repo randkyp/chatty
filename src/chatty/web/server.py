@@ -21,9 +21,9 @@ from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 
 from chatty.api import stream_chat
-from chatty.chat_session import ChatSession, TokenCounter
-from chatty.commands import ClientType, handle_command, is_command
-from chatty.config import AppConfig, load_config, resolve_limits
+from chatty.chat_session import ChatSession
+from chatty.commands import ClientType, handle_command, is_command, sync_token_counter
+from chatty.config import EPHEMERAL_KEY_REQUIRED, AppConfig, load_config, resolve_limits
 
 app = FastAPI()
 BASE_DIR = Path(__file__).parent
@@ -43,7 +43,7 @@ def _build_session(cfg: AppConfig) -> ChatSession:
         ctx_size=cfg.profile.ctx_size if cfg.profile.ctx_size is not None else 8192,
         genmax=cfg.profile.genmax if cfg.profile.genmax is not None else 0,
     )
-    session.set_counter(TokenCounter(base_url=cfg.profile.base_url, api_key=cfg.profile.api_key))
+    sync_token_counter(session, cfg)
     return session
 
 
@@ -68,8 +68,12 @@ class _Sender:
             pass
 
     def send_threadsafe(self, msg_type: str, content: str, **extra) -> None:
-        """Schedule a send from a non-async worker thread."""
-        asyncio.run_coroutine_threadsafe(self.send(msg_type, content, **extra), self._loop)
+        """Send from a worker thread while preserving WebSocket event order."""
+        future = asyncio.run_coroutine_threadsafe(self.send(msg_type, content, **extra), self._loop)
+        try:
+            future.result()
+        except Exception:  # noqa: BLE001 - a disconnected socket needs no recovery
+            pass
 
 
 def _coerce_images(raw_images: object) -> list[dict]:
@@ -99,7 +103,7 @@ def _run_stream(
     collected: list[str] = []
     stream = stream_chat(
         base_url=cfg.profile.base_url,
-        api_key=cfg.profile.api_key,
+        api_key=cfg.effective_api_key,
         model=cfg.profile.model or "default",
         messages=messages,
         samplers=cfg.profile.samplers,
@@ -131,6 +135,12 @@ async def _stream_to_ws(
     *,
     record: bool,
 ) -> None:
+    if cfg.ephemeral_api_key_missing:
+        if record:
+            session.revert_last_user_message()
+        await sender.send("error", EPHEMERAL_KEY_REQUIRED)
+        return
+
     await sender.send("stream_start", "")
     full_response = await asyncio.to_thread(_run_stream, cfg, session, messages, sender, cancel)
     # Record outside the worker thread so a late error can never mis-undo a
@@ -167,6 +177,10 @@ async def _handle_message(
             await sender.send("error", f"Command Error: {e}")
             return False
         await sender.send("command_end", "")
+
+        if result.request_api_key:
+            await sender.send("api_key_prompt", "")
+            return False
 
         if result.quit:
             await sender.send("system", "Goodbye!")
@@ -269,8 +283,27 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                     current_cancel.set()
                 continue
 
+            if msg_type == "api_key":
+                if cfg.profile.api_key_mode != "ephemeral":
+                    await sender.send(
+                        "error",
+                        'API key entry is only available for profiles using api_key_mode = "ephemeral".',
+                    )
+                    continue
+                api_key = req.get("api_key")
+                if not isinstance(api_key, str) or not api_key.strip():
+                    await sender.send("system", "API key unchanged.")
+                    continue
+                cfg.set_ephemeral_api_key(api_key)
+                sync_token_counter(session, cfg)
+                await sender.send("system", f"Ephemeral API key set for profile '{cfg.profile.name}'.")
+                continue
+
             if msg_type != "message":
                 continue
+
+            # Another connection may have changed this profile's shared key.
+            sync_token_counter(session, cfg)
 
             text = (req.get("text") or "").strip()
             if not text and not req.get("images"):

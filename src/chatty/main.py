@@ -20,14 +20,22 @@ from rich.markdown import Markdown
 from rich.text import Text
 
 from chatty.api import close_clients, stream_chat
-from chatty.chat_session import ChatSession, TokenCounter
+from chatty.chat_session import ChatSession
 from chatty.clipboard import ClipboardError, copy_text
-from chatty.commands import CommandResult, handle_command, is_command, save_session
-from chatty.config import AppConfig, ProfileNotFoundError, load_config, parse_args, resolve_limits
+from chatty.commands import CommandResult, handle_command, is_command, save_session, sync_token_counter
+from chatty.config import (
+    EPHEMERAL_KEY_REQUIRED,
+    AppConfig,
+    ProfileNotFoundError,
+    load_config,
+    parse_args,
+    resolve_limits,
+)
 from chatty.ui import (
     ChattyCompleter,
     console,
     create_prompt_session,
+    get_api_key_input,
     get_user_input,
     print_assistant_chunk,
     print_assistant_done,
@@ -55,9 +63,13 @@ def stream_and_render(
     (full_response, interrupted, usage) where *usage* is the server-reported
     token usage dict if available.
     """
+    if cfg.ephemeral_api_key_missing:
+        print_error(EPHEMERAL_KEY_REQUIRED)
+        return "", False, None
+
     stream = stream_chat(
         base_url=cfg.profile.base_url,
-        api_key=cfg.profile.api_key,
+        api_key=cfg.effective_api_key,
         model=cfg.profile.model or "default",
         messages=messages,
         samplers=cfg.profile.samplers,
@@ -171,6 +183,16 @@ def _handle_command_result(result: CommandResult, session: ChatSession, cfg: App
     """Act on a CommandResult. Returns True if the app should quit."""
     if result.quit:
         return True
+
+    if result.request_api_key:
+        api_key = get_api_key_input()
+        if not api_key or not api_key.strip():
+            print_system("API key unchanged.")
+            return False
+        cfg.set_ephemeral_api_key(api_key)
+        sync_token_counter(session, cfg)
+        print_system(f"Ephemeral API key set for profile '{cfg.profile.name}'.")
+        return False
 
     if result.ephemeral_prompt:
         messages = [{"role": "user", "content": result.ephemeral_prompt}]
@@ -295,7 +317,7 @@ def main(argv: list[str] | None = None) -> None:
         ctx_size=cfg.profile.ctx_size if cfg.profile.ctx_size is not None else 8192,
         genmax=cfg.profile.genmax if cfg.profile.genmax is not None else 0,
     )
-    session.set_counter(TokenCounter(base_url=cfg.profile.base_url, api_key=cfg.profile.api_key))
+    sync_token_counter(session, cfg)
 
     print_welcome(
         cfg.profile.name,
@@ -325,15 +347,17 @@ def main(argv: list[str] | None = None) -> None:
             if not text:
                 continue
 
-            print_user(text)
-
             # ── Slash command handling ──────────────────────────────────────
             if is_command(text):
+                # Never echo a possible key argument into terminal scrollback.
+                print_user("/apikey" if text.lower().startswith("/apikey ") else text)
                 result = handle_command(text, session, cfg)
                 if _handle_command_result(result, session, cfg):
                     print_system("Goodbye!")
                     break
                 continue
+
+            print_user(text)
 
             # ── Escape: // → literal / ──────────────────────────────────────
             if text.startswith("//"):

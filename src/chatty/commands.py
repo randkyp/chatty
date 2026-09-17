@@ -23,7 +23,7 @@ from typing import Any
 from rich.console import Console
 
 from chatty.chat_session import ChatSession, TokenCounter
-from chatty.config import AppConfig, ProfileNotFoundError, save_profile
+from chatty.config import EPHEMERAL_KEY_REQUIRED, AppConfig, ProfileNotFoundError, save_profile
 from chatty.images import encode_image, encode_image_file, get_clipboard_image
 
 console = Console()
@@ -65,6 +65,7 @@ class CommandResult:
     remove_last_exchange: bool = False
     remove_last_assistant: bool = False
     load_messages: list[dict[str, Any]] | None = None
+    request_api_key: bool = False
 
 
 # ── Sampler helpers ────────────────────────────────────────────────────────
@@ -149,6 +150,7 @@ COMMANDS: list[str] = [
     "/ctx",
     "/genmax",
     "/profile",
+    "/apikey",
     "/samplers",
     "/sampelrs",
     "/save",
@@ -213,6 +215,9 @@ def handle_command(
 
         case "/profile":
             return _cmd_profile(arg, session, cfg)
+
+        case "/apikey":
+            return _cmd_api_key(arg, session, cfg)
 
         case "/samplers":
             return _cmd_samplers(arg, cfg, session)
@@ -327,13 +332,50 @@ def _cmd_profile(arg: str, session: ChatSession, cfg: AppConfig) -> CommandResul
     except ProfileNotFoundError as e:
         return CommandResult(message=str(e))
     new_profile = cfg.profile
-    session.set_counter(TokenCounter(base_url=new_profile.base_url, api_key=new_profile.api_key))
+    sync_token_counter(session, cfg)
     session.system_prompt = new_profile.system_prompt
     if new_profile.ctx_size is not None:
         session.ctx_size = new_profile.ctx_size
     if new_profile.genmax is not None:
         session.genmax = new_profile.genmax
     return CommandResult(message=f"Switched to profile '{arg}'.")
+
+
+def sync_token_counter(session: ChatSession, cfg: AppConfig) -> None:
+    """Refresh tokenization credentials from the active profile's effective key."""
+    current = session._counter
+    server_enabled = not cfg.ephemeral_api_key_missing
+    if (
+        current is not None
+        and current.base_url == cfg.profile.base_url
+        and current.api_key == cfg.effective_api_key
+        and current.server_enabled == server_enabled
+    ):
+        return
+    session.set_counter(
+        TokenCounter(
+            base_url=cfg.profile.base_url,
+            api_key=cfg.effective_api_key,
+            server_enabled=server_enabled,
+        )
+    )
+
+
+def _cmd_api_key(arg: str, session: ChatSession, cfg: AppConfig) -> CommandResult:
+    if cfg.profile.api_key_mode != "ephemeral":
+        return CommandResult(message='API key entry is only available for profiles using api_key_mode = "ephemeral".')
+
+    subcommand = arg.strip().lower()
+    if not subcommand:
+        return CommandResult(request_api_key=True)
+    if subcommand == "status":
+        state = "set" if cfg.effective_api_key is not None else "not set"
+        return CommandResult(message=f"Ephemeral API key is {state} for profile '{cfg.profile.name}'.")
+    if subcommand == "clear":
+        cfg.clear_ephemeral_api_key()
+        sync_token_counter(session, cfg)
+        return CommandResult(message=f"Ephemeral API key cleared for profile '{cfg.profile.name}'.")
+    return CommandResult(message="Usage: /apikey, /apikey status, or /apikey clear. Never pass a key as an argument.")
 
 
 def _cmd_samplers(arg: str, cfg: AppConfig, session: ChatSession) -> CommandResult:
@@ -659,9 +701,11 @@ def _cmd_list(session: ChatSession) -> CommandResult:
 def _cmd_models(arg: str, cfg: AppConfig) -> CommandResult:
     arg = arg.strip()
     if not arg:
+        if cfg.ephemeral_api_key_missing:
+            return CommandResult(message=EPHEMERAL_KEY_REQUIRED)
         from chatty.api import list_models
 
-        models = list_models(cfg.profile.base_url, cfg.profile.api_key)
+        models = list_models(cfg.profile.base_url, cfg.effective_api_key)
         if not models:
             return CommandResult(message="Failed to fetch models or no models found.")
         return CommandResult(message="Available models:\n" + "\n".join(f"- {m}" for m in models))
@@ -790,6 +834,7 @@ def _cmd_help() -> CommandResult:
         ("/ctx [size]", "Show context window details or set context size."),
         ("/genmax [tokens]", "Show or set max generation tokens."),
         ("/profile [name]", "Show active profile or switch connection profile."),
+        ("/apikey [status|clear]", "Enter, inspect, or clear a process-memory API key."),
         ("/samplers [opts]", "Show, set, remove samplers, or save settings (/samplers save)."),
         ("/image [file]", "Attach an image from file path or clipboard."),
         ("/save [file]", "Save active chat session to session.json or custom file."),

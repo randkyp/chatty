@@ -27,6 +27,7 @@ class TokenCounter:
 
     base_url: str
     api_key: str | None = field(default=None, repr=False)
+    server_enabled: bool = field(default=True, repr=False)
     _use_server: bool | None = field(default=None, repr=False)
     _tiktoken_enc: Any = field(default=None, repr=False)
     _cache: OrderedDict[tuple[bool | None, str], int] = field(default_factory=OrderedDict, repr=False)
@@ -54,8 +55,9 @@ class TokenCounter:
             self._cache.move_to_end(cache_key)
             return self._cache[cache_key]
 
-        # First call: probe the server.
-        if self._use_server is None:
+        # First call: probe the server unless the active profile explicitly
+        # requires an ephemeral credential that has not been entered yet.
+        if self.server_enabled and self._use_server is None:
             try:
                 resp = self._post_tokenize(text)
                 if resp.status_code == 200:
@@ -78,7 +80,7 @@ class TokenCounter:
             except (httpx.HTTPError, json.JSONDecodeError, TypeError, AttributeError):
                 self._use_server = False
 
-        if self._use_server:
+        if self.server_enabled and self._use_server:
             try:
                 resp = self._post_tokenize(text)
                 if resp.status_code == 200:
