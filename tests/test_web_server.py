@@ -130,6 +130,7 @@ def test_websocket_model_picker_selects_and_next_completion_uses_model(client, r
             "current": "test-model",
         }
 
+        assert ws.receive_json()["type"] == "submission_done"
         ws.send_json({"type": "model_select", "model": "alpha"})
         assert ws.receive_json() == {"type": "model_selected", "content": "Model: alpha"}
 
@@ -191,11 +192,16 @@ def test_stop_closes_silent_stream_and_allows_next_request(client, respx_mock, p
         if partial:
             assert ws.receive_json()["content"] == "partial"
         assert reading.wait(3)
+        ws.send_json({"type": "message", "text": "rejected while busy"})
+        assert ws.receive_json()["type"] == "submission_rejected"
         ws.send_json({"type": "model_select", "model": "next-model"})
         assert ws.receive_json() == {"type": "model_selected", "content": "Model: next-model"}
         ws.send_json({"type": "cancel"})
         assert ws.receive_json()["type"] == "stream_end"
         assert closed.wait(3)
+        done = ws.receive_json()
+        assert done["type"] == "submission_done"
+        assert done["accepted"] is partial
 
         route.respond(200, text='data: {"choices": [{"delta": {"content": "next"}}]}\n\ndata: [DONE]\n')
         ws.send_json({"type": "message", "text": "second"})
@@ -310,6 +316,7 @@ def test_websocket_key_is_shared_with_existing_connection_and_reconnect(tmp_path
             reconnected.send_json({"type": "message", "text": "/apikey status"})
             seen = [reconnected.receive_json() for _ in range(3)]
             assert any(message["type"] == "system" and "is set" in message["content"] for message in seen)
+            assert reconnected.receive_json()["type"] == "submission_done"
             reconnected.send_json({"type": "message", "text": "/apikey clear"})
             seen = [reconnected.receive_json() for _ in range(3)]
             assert any(message["type"] == "system" and "cleared" in message["content"] for message in seen)

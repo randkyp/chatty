@@ -2,9 +2,13 @@
 //
 // Talks to the FastAPI WebSocket at /ws. Features: auto-reconnect, a Stop button
 // that cancels in-flight generation, throttled markdown rendering, image
-// paste/drop, persisted theme + chat history (display-only) + input history.
+// paste/drop, persisted theme + input history.
 
 const history = document.getElementById('chat-history');
+const conversation = document.createElement('div');
+history.appendChild(conversation);
+let pendingSubmission = null;
+
 const input = document.getElementById('user-input');
 const stopButton = document.getElementById('stop-button');
 const inputWrapper = document.getElementById('input-wrapper');
@@ -80,18 +84,29 @@ function appendSystemMessage(text, type = 'system') {
     return div;
 }
 
-function appendUserMessage(text) {
-    const div = document.createElement('div');
-    div.className = 'message user';
-    div.textContent = `> ${text}`;
-    history.appendChild(div);
-}
-
-function appendAssistantMessage(markdownText) {
-    const div = document.createElement('div');
-    div.className = 'message assistant';
-    div.innerHTML = renderMarkdown(markdownText);
-    history.appendChild(div);
+function renderHistory(messages) {
+    conversation.innerHTML = '';
+    for (const msg of messages) {
+        if (msg.role !== 'user' && msg.role !== 'assistant') continue;
+        const div = document.createElement('div');
+        div.className = `message ${msg.role}`;
+        const parts = typeof msg.content === 'string'
+            ? [{ type: 'text', text: msg.content }] : msg.content;
+        const text = parts.filter(p => p.type === 'text').map(p => p.text).join('');
+        if (msg.role === 'assistant') div.innerHTML = renderMarkdown(text);
+        else div.textContent = `> ${text}`;
+        for (const part of parts) {
+            if (part.type === 'image_url') {
+                const image = document.createElement('img');
+                image.src = part.image_url.url;
+                image.alt = 'Attached image';
+                image.style.maxWidth = '100%';
+                div.appendChild(image);
+            }
+        }
+        conversation.appendChild(div);
+    }
+    scrollToBottom();
 }
 
 function showApiKeyPrompt() {
@@ -319,7 +334,10 @@ function connect() {
     ws.onclose = () => {
         setStreaming(false);
         stopThinking();
-        closeModelPickerLocal(true);
+        pendingSubmission = null;
+        if (currentAssistantDiv) currentAssistantDiv.remove();
+        currentAssistantDiv = null;
+        closeModelPickerLocal(false);
         if (manualClose) return;
 
         if (reconnectAttempts >= 5) {
@@ -339,6 +357,9 @@ function connect() {
 function handleServerMessage(data) {
     switch (data.type) {
         case 'welcome':
+            renderHistory([]);
+            appendSystemMessage(`${data.content} New connection: context and settings reset.`);
+            break;
         case 'system':
             appendSystemMessage(data.content);
             break;
@@ -355,7 +376,7 @@ function handleServerMessage(data) {
         case 'command_start':
             currentCommandDiv = document.createElement('div');
             currentCommandDiv.className = 'message system';
-            currentCommandDiv.innerHTML = `<em>Running ${data.content}...</em>`;
+            currentCommandDiv.textContent = `Running ${data.content}...`;
             history.appendChild(currentCommandDiv);
             break;
         case 'command_end':
@@ -371,53 +392,35 @@ function handleServerMessage(data) {
                 .then(() => appendSystemMessage('Last response copied to clipboard.'))
                 .catch((err) => appendSystemMessage(`Failed to copy: ${err}`, 'error'));
             break;
-        case 'clear_dom':
-            history.innerHTML = '';
+        case 'history':
+            renderHistory(data.content);
             break;
-        case 'remove_last_exchange': {
-            const messages = history.querySelectorAll('.message.assistant, .message.user');
-            if (messages.length >= 2) {
-                messages[messages.length - 1].remove();
-                messages[messages.length - 2].remove();
-            } else if (messages.length === 1) {
-                messages[0].remove();
-            }
+        case 'submission_rejected':
+            pendingSubmission = null;
+            appendSystemMessage(data.content, 'warning');
             break;
-        }
-        case 'remove_last_assistant': {
-            const assistantMsgs = history.querySelectorAll('.message.assistant');
-            if (assistantMsgs.length > 0) {
-                assistantMsgs[assistantMsgs.length - 1].remove();
-            }
-            break;
-        }
-        case 'load_history': {
-            history.innerHTML = '';
-            const messages = data.content;
-            messages.forEach(msg => {
-                if (msg.role === 'user') {
-                    let text = '';
-                    if (typeof msg.content === 'string') text = msg.content;
-                    else if (Array.isArray(msg.content)) {
-                        text = msg.content.filter(p => p.type === 'text').map(p => p.text).join('');
-                    }
-                    appendUserMessage(text);
-                } else if (msg.role === 'assistant') {
-                    let text = '';
-                    if (typeof msg.content === 'string') text = msg.content;
-                    else if (Array.isArray(msg.content)) {
-                        text = msg.content.filter(p => p.type === 'text').map(p => p.text).join('');
-                    }
-                    appendAssistantMessage(text);
+        case 'submission_done':
+            // Preparation/provider exceptions may finish without stream_end.
+            if (currentAssistantDiv) handleServerMessage({ type: 'stream_end' });
+            renderHistory(data.content);
+            if (data.accepted && pendingSubmission) {
+                if (input.value === pendingSubmission.text) {
+                    input.value = '';
+                    input.style.height = 'auto';
                 }
-            });
-            scrollToBottom();
+                for (const image of pendingSubmission.images) {
+                    const index = pendingImages.indexOf(image);
+                    if (index !== -1) pendingImages.splice(index, 1);
+                }
+                renderImageChips();
+            }
+            pendingSubmission = null;
             break;
-        }
         case 'stream_start':
             setStreaming(true);
             currentAssistantDiv = document.createElement('div');
-            currentAssistantDiv.className = 'message assistant';
+            currentAssistantDiv.className = data.ephemeral ? 'message assistant ephemeral' : 'message assistant pending';
+            if (data.ephemeral) appendSystemMessage('/btw — outside conversation context');
             history.appendChild(currentAssistantDiv);
             currentAssistantContent = '';
             currentAssistantDiv.innerHTML = '<em>Thinking... 0.0s</em>';
@@ -438,7 +441,7 @@ function handleServerMessage(data) {
             stopThinking();
             setStreaming(false);
             if (currentAssistantDiv) {
-                if (currentAssistantContent === '') {
+                if (currentAssistantContent === '' || currentAssistantDiv.className === 'message assistant pending') {
                     currentAssistantDiv.remove();
                 } else {
                     currentAssistantDiv.innerHTML = renderMarkdown(currentAssistantContent);
@@ -473,6 +476,10 @@ function scheduleRender() {
 // ── Sending ─────────────────────────────────────────────────────────────────
 function sendMessage() {
     if (modelPicker) return;
+    if (pendingSubmission || streaming) {
+        appendSystemMessage('A request is still running; press Stop first.', 'warning');
+        return;
+    }
     const text = input.value.trim();
     if (!text && pendingImages.length === 0) return;
 
@@ -482,18 +489,20 @@ function sendMessage() {
     if (apiKeyCommand) {
         const argument = (apiKeyCommand[1] || '').trim().toLowerCase();
         if (argument && argument !== 'status' && argument !== 'clear') {
-            appendUserMessage('/apikey [argument rejected]');
+            appendSystemMessage('/apikey [argument rejected]');
             appendSystemMessage('Use bare /apikey and the dedicated password field. Never pass a key as an argument.', 'error');
-            pendingImages.length = 0;
-            renderImageChips();
             input.value = '';
             input.style.height = 'auto';
             return;
         }
     }
 
+    if (!ws || ws.readyState !== WebSocket.OPEN) {
+        appendSystemMessage('Not connected to server.', 'error');
+        return;
+    }
+
     if (text) {
-        appendUserMessage(text);
         inputHistory.push(text);
         if (inputHistory.length > 200) inputHistory = inputHistory.slice(-200);
         saveStore(INPUT_KEY, inputHistory);
@@ -509,13 +518,15 @@ function sendMessage() {
         appendSystemMessage(theme === 'dark' || theme === 'light'
             ? `Theme set to ${theme}` : 'Theme set to auto (OS preference)');
     } else if (ws && ws.readyState === WebSocket.OPEN) {
-        ws.send(JSON.stringify({ type: 'message', text, images: pendingImages.slice() }));
+        const command = text.startsWith('/') && !text.startsWith('//');
+        pendingSubmission = { text: input.value, images: command ? [] : pendingImages.slice() };
+        ws.send(JSON.stringify({ type: 'message', text, images: pendingSubmission.images }));
+        if (command) appendSystemMessage(`> ${text}`);
+        return;
     } else {
         appendSystemMessage('Not connected to server.', 'error');
     }
 
-    pendingImages.length = 0;
-    renderImageChips();
     input.value = '';
     input.style.height = 'auto';
 }

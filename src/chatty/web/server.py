@@ -97,7 +97,7 @@ async def _stream_to_ws(
         await sender.send("error", EPHEMERAL_KEY_REQUIRED)
         return
 
-    await sender.send("stream_start", "")
+    await sender.send("stream_start", "", ephemeral=not record)
     collected: list[str] = []
     streaming.set()
     try:
@@ -164,17 +164,13 @@ async def _handle_message(
             await sender.send("system", "Goodbye!")
             return True
 
-        if result.clear_dom:
-            await sender.send("clear_dom", "")
-
-        if result.remove_last_exchange:
-            await sender.send("remove_last_exchange", "")
-
-        if result.remove_last_assistant:
-            await sender.send("remove_last_assistant", "")
-
-        if result.load_messages is not None:
-            await sender.send("load_history", result.load_messages[-50:])
+        if (
+            result.clear_dom
+            or result.remove_last_exchange
+            or result.remove_last_assistant
+            or result.load_messages is not None
+        ):
+            await sender.send("history", session.messages)
 
         if result.ephemeral_prompt:
             messages = [{"role": "user", "content": result.ephemeral_prompt}]
@@ -307,13 +303,30 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                 continue
 
             if current_task is not None and not current_task.done():
-                await sender.send("warning", "A response is still generating; press Stop first.")
+                await sender.send("submission_rejected", "A response is still generating; press Stop first.")
                 continue
 
             async def _runner(text=text, images=req.get("images")) -> None:
-                quit_requested = await _handle_message(text, images, session, cfg, sender, streaming)
-                if quit_requested:
-                    await websocket.close()
+                before = copy.deepcopy(session.messages)
+                command = is_command(text)
+                accepted = False
+                try:
+                    quit_requested = await _handle_message(text, images, session, cfg, sender, streaming)
+                    accepted = command or (
+                        session.messages != before
+                        and bool(session.messages)
+                        and session.messages[-1].get("role") == "assistant"
+                    )
+                    if quit_requested:
+                        await websocket.close()
+                except Exception as e:  # noqa: BLE001
+                    if not command:
+                        session.revert_last_user_message()
+                    await sender.send("error", f"Request failed: {e}")
+                finally:
+                    # ponytail: full snapshots cost O(history size), including images;
+                    # use stable turn IDs and deltas if long sessions make this costly.
+                    await sender.send("submission_done", session.messages, accepted=accepted)
 
             current_task = asyncio.create_task(_runner())
     except WebSocketDisconnect:
