@@ -13,14 +13,13 @@ from __future__ import annotations
 import asyncio
 import copy
 import json
-import threading
 from pathlib import Path
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 
-from chatty.api import stream_chat
+from chatty.api import stream_chat_async
 from chatty.chat_session import ChatSession
 from chatty.commands import ClientType, handle_command, is_command, sync_token_counter
 from chatty.config import EPHEMERAL_KEY_REQUIRED, AppConfig, load_config, resolve_limits
@@ -54,25 +53,16 @@ def _welcome_text(cfg: AppConfig, session: ChatSession) -> str:
 
 
 class _Sender:
-    """Sends JSON messages to a WebSocket, callable from worker threads too."""
+    """Send JSON messages from the connection's event loop."""
 
-    def __init__(self, ws: WebSocket, loop: asyncio.AbstractEventLoop) -> None:
+    def __init__(self, ws: WebSocket) -> None:
         self._ws = ws
-        self._loop = loop
 
     async def send(self, msg_type: str, content: object, **extra) -> None:
         payload = {"type": msg_type, "content": content, **extra}
         try:
             await self._ws.send_text(json.dumps(payload))
         except RuntimeError:
-            pass
-
-    def send_threadsafe(self, msg_type: str, content: str, **extra) -> None:
-        """Send from a worker thread while preserving WebSocket event order."""
-        future = asyncio.run_coroutine_threadsafe(self.send(msg_type, content, **extra), self._loop)
-        try:
-            future.result()
-        except Exception:  # noqa: BLE001 - a disconnected socket needs no recovery
             pass
 
 
@@ -92,46 +82,12 @@ def _coerce_images(raw_images: object) -> list[dict]:
     return images
 
 
-def _run_stream(
-    cfg: AppConfig,
-    session: ChatSession,
-    messages: list[dict],
-    sender: _Sender,
-    cancel: threading.Event,
-) -> str:
-    """Blocking stream consumer (runs in a worker thread). Returns collected text."""
-    collected: list[str] = []
-    stream = stream_chat(
-        base_url=cfg.profile.base_url,
-        api_key=cfg.effective_api_key,
-        model=cfg.profile.model or "default",
-        messages=messages,
-        samplers=cfg.profile.samplers,
-        genmax=session.genmax,
-        debug=cfg.debug,
-    )
-    try:
-        for event_type, content in stream:
-            if cancel.is_set():
-                break
-            if event_type == "error":
-                sender.send_threadsafe("error", content)
-                break
-            if event_type == "usage":
-                continue
-            collected.append(content)
-            sender.send_threadsafe("stream_chunk", content)
-    finally:
-        stream.close()
-    return "".join(collected)
-
-
 async def _stream_to_ws(
     cfg: AppConfig,
     session: ChatSession,
     messages: list[dict],
     sender: _Sender,
-    cancel: threading.Event,
+    streaming: asyncio.Event,
     *,
     record: bool,
 ) -> None:
@@ -142,9 +98,29 @@ async def _stream_to_ws(
         return
 
     await sender.send("stream_start", "")
-    full_response = await asyncio.to_thread(_run_stream, cfg, session, messages, sender, cancel)
-    # Record outside the worker thread so a late error can never mis-undo a
-    # completed exchange (the old code called undo() from the except block).
+    collected: list[str] = []
+    streaming.set()
+    try:
+        async for event_type, content in stream_chat_async(
+            base_url=cfg.profile.base_url,
+            api_key=cfg.effective_api_key,
+            model=cfg.profile.model or "default",
+            messages=messages,
+            samplers=cfg.profile.samplers,
+            genmax=session.genmax,
+            debug=cfg.debug,
+        ):
+            if event_type == "error":
+                await sender.send("error", content)
+                continue
+            if event_type == "delta":
+                collected.append(content)
+                await sender.send("stream_chunk", content)
+    except asyncio.CancelledError:
+        pass
+    finally:
+        streaming.clear()
+    full_response = "".join(collected)
     if record:
         if full_response:
             session.add_assistant_message(full_response)
@@ -159,7 +135,7 @@ async def _handle_message(
     session: ChatSession,
     cfg: AppConfig,
     sender: _Sender,
-    cancel: threading.Event,
+    streaming: asyncio.Event,
 ) -> bool:
     """Handle one user message. Returns True if the client asked to quit."""
     # ── Slash commands ──────────────────────────────────────────────────────
@@ -202,7 +178,7 @@ async def _handle_message(
 
         if result.ephemeral_prompt:
             messages = [{"role": "user", "content": result.ephemeral_prompt}]
-            await _stream_to_ws(cfg, session, messages, sender, cancel, record=False)
+            await _stream_to_ws(cfg, session, messages, sender, streaming, record=False)
             return False
 
         if result.resend_user:
@@ -210,7 +186,7 @@ async def _handle_message(
             if payload is None:
                 await sender.send("warning", "Context budget exceeded.")
             else:
-                await _stream_to_ws(cfg, session, payload, sender, cancel, record=True)
+                await _stream_to_ws(cfg, session, payload, sender, streaming, record=True)
             return False
 
         if result.copy_last:
@@ -256,7 +232,7 @@ async def _handle_message(
         session.revert_last_user_message()
         return False
 
-    await _stream_to_ws(cfg, session, payload_messages, sender, cancel, record=True)
+    await _stream_to_ws(cfg, session, payload_messages, sender, streaming, record=True)
     return False
 
 
@@ -270,14 +246,13 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
     cfg = copy.deepcopy(base_cfg)
     session = _build_session(cfg)
 
-    loop = asyncio.get_running_loop()
-    sender = _Sender(websocket, loop)
+    sender = _Sender(websocket)
     await sender.send("welcome", _welcome_text(cfg, session))
     if cfg.ephemeral_api_key_missing:
         await sender.send("api_key_prompt", "")
 
     current_task: asyncio.Task | None = None
-    current_cancel: threading.Event | None = None
+    streaming = asyncio.Event()
 
     try:
         while True:
@@ -290,8 +265,9 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
             msg_type = req.get("type")
 
             if msg_type == "cancel":
-                if current_cancel is not None:
-                    current_cancel.set()
+                if streaming.is_set() and current_task is not None:
+                    current_task.cancel()
+                    await current_task
                 continue
 
             if msg_type == "api_key":
@@ -334,19 +310,20 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                 await sender.send("warning", "A response is still generating; press Stop first.")
                 continue
 
-            current_cancel = threading.Event()
-
-            async def _runner(text=text, images=req.get("images"), cancel=current_cancel) -> None:
-                quit_requested = await _handle_message(text, images, session, cfg, sender, cancel)
+            async def _runner(text=text, images=req.get("images")) -> None:
+                quit_requested = await _handle_message(text, images, session, cfg, sender, streaming)
                 if quit_requested:
                     await websocket.close()
 
             current_task = asyncio.create_task(_runner())
     except WebSocketDisconnect:
-        if current_cancel is not None:
-            current_cancel.set()
+        pass
     except Exception as e:  # noqa: BLE001
         print(f"WebSocket Error: {e}")
+    finally:
+        if streaming.is_set() and current_task is not None:
+            current_task.cancel()
+            await current_task
 
 
 def run_server(argv: list[str] | None = None, *, host: str = "127.0.0.1", port: int = 8000) -> None:

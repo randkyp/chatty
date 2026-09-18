@@ -9,7 +9,7 @@ Handles connection errors gracefully (returns error events instead of raising).
 from __future__ import annotations
 
 import json
-from collections.abc import Generator
+from collections.abc import AsyncGenerator, Generator
 from typing import Any, Literal
 
 import httpx
@@ -117,6 +117,44 @@ def list_models(base_url: str, api_key: str | None) -> list[str]:
     return []
 
 
+def _stream_payload(
+    model: str, messages: list[dict[str, Any]], samplers: dict[str, Any], genmax: int, debug: bool
+) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "model": model,
+        "messages": messages,
+        "stream": True,
+        "stream_options": {"include_usage": True},
+    }
+    if genmax > 0:
+        payload["max_tokens"] = genmax
+    payload.update(samplers)
+    if debug:
+        print("\n── DEBUG: request payload ──")
+        print(json.dumps(payload, indent=2, ensure_ascii=False))
+        print("── end payload ──\n")
+    return payload
+
+
+def _stream_events(data: str) -> Generator[tuple[Literal["delta", "error", "usage"], str], None, None]:
+    try:
+        chunk = json.loads(data)
+    except json.JSONDecodeError:
+        return
+    err = chunk.get("error")
+    if err:
+        msg = err.get("message") if isinstance(err, dict) else str(err)
+        yield "error", f"Server error: {msg}"
+        return
+    if chunk.get("usage"):
+        yield "usage", json.dumps(chunk["usage"])
+    choices = chunk.get("choices", [])
+    if choices:
+        delta = choices[0].get("delta", {}).get("content", "")
+        if delta:
+            yield "delta", delta
+
+
 def stream_chat(
     base_url: str,
     api_key: str | None,
@@ -132,23 +170,7 @@ def stream_chat(
     caller can display it. Otherwise yields ("delta", text) events and, if the
     server reports it, a final ("usage", json) event carrying token counts.
     """
-    payload: dict[str, Any] = {
-        "model": model,
-        "messages": messages,
-        "stream": True,
-        # Ask OpenAI-compatible servers to include a usage object in the final
-        # chunk. Servers that don't support it simply ignore the field.
-        "stream_options": {"include_usage": True},
-    }
-    if genmax > 0:
-        payload["max_tokens"] = genmax
-    # Merge samplers (arbitrary nested dicts) directly into the payload.
-    payload.update(samplers)
-
-    if debug:
-        print("\n── DEBUG: request payload ──")
-        print(json.dumps(payload, indent=2, ensure_ascii=False))
-        print("── end payload ──\n")
+    payload = _stream_payload(model, messages, samplers, genmax, debug)
 
     headers = _auth_headers(api_key)
     client = get_client(base_url, api_key)
@@ -167,38 +189,58 @@ def stream_chat(
                 return
 
             for line in response.iter_lines():
-                if not line:
+                if not line.startswith("data: "):
                     continue
-                if line.startswith("data: "):
-                    data_str = line[6:]
-                    if data_str.strip() == "[DONE]":
+                data = line[6:]
+                if data.strip() == "[DONE]":
+                    return
+                for event in _stream_events(data):
+                    yield event
+                    if event[0] == "error":
                         return
-                    try:
-                        chunk = json.loads(data_str)
-                        # Some providers (e.g. NVIDIA NIM) return HTTP 200 but
-                        # stream the error in-band as a data: line. Surface it
-                        # instead of silently yielding a blank response.
-                        err = chunk.get("error")
-                        if err:
-                            msg = err.get("message") if isinstance(err, dict) else str(err)
-                            yield "error", f"Server error: {msg}"
-                            return
-                        usage = chunk.get("usage")
-                        if usage:
-                            yield "usage", json.dumps(usage)
-                        choices = chunk.get("choices", [])
-                        if choices:
-                            delta = choices[0].get("delta", {}).get("content", "")
-                            if delta:
-                                yield "delta", delta
-                    except (json.JSONDecodeError, IndexError):
-                        continue
     except httpx.ConnectError as e:
         yield "error", f"Connection failed: {e}"
     except httpx.HTTPError as e:
         yield "error", f"HTTP error: {e}"
     except Exception as e:
         yield "error", f"Unexpected error: {e}"
+
+
+async def stream_chat_async(
+    base_url: str,
+    api_key: str | None,
+    model: str,
+    messages: list[dict[str, Any]],
+    samplers: dict[str, Any],
+    genmax: int,
+    debug: bool = False,
+) -> AsyncGenerator[tuple[Literal["delta", "error", "usage"], str], None]:
+    """Stream web completions with cancellable reads and task-owned connections."""
+    payload = _stream_payload(model, messages, samplers, genmax, debug)
+
+    try:
+        async with httpx.AsyncClient(timeout=STREAM_TIMEOUT, http2=False) as client:
+            async with client.stream(
+                "POST", f"{base_url}/v1/chat/completions", json=payload, headers=_auth_headers(api_key)
+            ) as response:
+                if response.status_code != 200:
+                    body = (await response.aread()).decode(errors="replace")
+                    yield "error", f"HTTP {response.status_code}: {body}"
+                    return
+                async for line in response.aiter_lines():
+                    if not line.startswith("data: "):
+                        continue
+                    data = line[6:]
+                    if data.strip() == "[DONE]":
+                        return
+                    for event in _stream_events(data):
+                        yield event
+                        if event[0] == "error":
+                            return
+    except httpx.ConnectError as e:
+        yield "error", f"Connection failed: {e}"
+    except httpx.HTTPError as e:
+        yield "error", f"HTTP error: {e}"
 
 
 def _auth_headers(api_key: str | None) -> dict[str, str]:

@@ -1,5 +1,8 @@
+import asyncio
 import json
+import threading
 
+import httpx
 import pytest
 from fastapi.testclient import TestClient
 
@@ -159,6 +162,76 @@ def test_websocket_cancel_without_generation_is_noop(client, respx_mock):
         ws.send_json({"type": "message", "text": "/help"})
         # Connection still responsive after a stray cancel.
         assert any(ws.receive_json()["type"] == "command_start" for _ in range(3))
+
+
+@pytest.mark.timeout(10)
+@pytest.mark.parametrize("partial", [False, True])
+def test_stop_closes_silent_stream_and_allows_next_request(client, respx_mock, partial):
+    reading = threading.Event()
+    closed = threading.Event()
+
+    class SilentStream(httpx.AsyncByteStream):
+        async def __aiter__(self):
+            if partial:
+                yield b'data: {"choices": [{"delta": {"content": "partial"}}]}\n\n'
+            reading.set()
+            await asyncio.Event().wait()
+            yield b""  # pragma: no cover
+
+        async def aclose(self):
+            closed.set()
+
+    respx_mock.post("http://up/tokenize").respond(404)
+    route = respx_mock.post("http://up/v1/chat/completions")
+    route.return_value = httpx.Response(200, stream=SilentStream())
+    with client.websocket_connect("/ws") as ws:
+        ws.receive_json()
+        ws.send_json({"type": "message", "text": "first"})
+        assert ws.receive_json()["type"] == "stream_start"
+        if partial:
+            assert ws.receive_json()["content"] == "partial"
+        assert reading.wait(3)
+        ws.send_json({"type": "model_select", "model": "next-model"})
+        assert ws.receive_json() == {"type": "model_selected", "content": "Model: next-model"}
+        ws.send_json({"type": "cancel"})
+        assert ws.receive_json()["type"] == "stream_end"
+        assert closed.wait(3)
+
+        route.respond(200, text='data: {"choices": [{"delta": {"content": "next"}}]}\n\ndata: [DONE]\n')
+        ws.send_json({"type": "message", "text": "second"})
+        assert ws.receive_json()["type"] == "stream_start"
+        assert ws.receive_json()["content"] == "next"
+        assert ws.receive_json()["type"] == "stream_end"
+
+    payload = json.loads(route.calls[-1].request.content)
+    assert payload["model"] == "next-model"
+    assert payload["messages"] == (
+        [{"role": "user", "content": "first"}, {"role": "assistant", "content": "partial"}] if partial else []
+    ) + [{"role": "user", "content": "second"}]
+
+
+@pytest.mark.timeout(10)
+def test_disconnect_closes_silent_stream(client, respx_mock):
+    reading = threading.Event()
+    closed = threading.Event()
+
+    class SilentStream(httpx.AsyncByteStream):
+        async def __aiter__(self):
+            reading.set()
+            await asyncio.Event().wait()
+            yield b""  # pragma: no cover
+
+        async def aclose(self):
+            closed.set()
+
+    respx_mock.post("http://up/tokenize").respond(404)
+    respx_mock.post("http://up/v1/chat/completions").return_value = httpx.Response(200, stream=SilentStream())
+    with client.websocket_connect("/ws") as ws:
+        ws.receive_json()
+        ws.send_json({"type": "message", "text": "first"})
+        assert ws.receive_json()["type"] == "stream_start"
+        assert reading.wait(3)
+    assert closed.wait(3)
 
 
 def test_websocket_ephemeral_key_authenticates_tokenize_and_chat(tmp_path, respx_mock):
