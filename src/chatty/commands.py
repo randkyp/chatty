@@ -23,7 +23,7 @@ from typing import Any
 from rich.console import Console
 
 from chatty.chat_session import ChatSession, TokenCounter
-from chatty.config import EPHEMERAL_KEY_REQUIRED, AppConfig, ProfileNotFoundError, save_profile
+from chatty.config import EPHEMERAL_KEY_REQUIRED, AppConfig, ProfileNotFoundError, resolve_limits, save_profile
 from chatty.images import encode_image, encode_image_file, get_clipboard_image
 
 console = Console()
@@ -71,9 +71,11 @@ class CommandResult:
     model_current: str | None = None
 
 
-def apply_model_choice(cfg: AppConfig, model_id: str) -> str:
-    """Apply a model selection and return the confirmation message."""
+def apply_model_choice(cfg: AppConfig, session: ChatSession, model_id: str) -> str:
+    """Apply a model selection, refreshing inferred limits for that model."""
     cfg.profile.model = model_id
+    resolve_limits(cfg)
+    sync_profile_settings(session, cfg)
     return f"Model: {model_id}"
 
 
@@ -267,7 +269,7 @@ def handle_command(
             return _cmd_help()
 
         case "/models":
-            return _cmd_models(arg, cfg)
+            return _cmd_models(arg, session, cfg)
 
         case "/btw":
             return _cmd_btw(arg)
@@ -361,20 +363,27 @@ def _cmd_profile(arg: str, session: ChatSession, cfg: AppConfig) -> CommandResul
     except ProfileNotFoundError as e:
         return CommandResult(message=str(e))
     new_profile = cfg.profile
-    sync_token_counter(session, cfg)
+    sync_profile_settings(session, cfg)
     session.system_prompt = new_profile.system_prompt
-    if new_profile.ctx_size is not None:
-        session.ctx_size = new_profile.ctx_size
-    if new_profile.genmax is not None:
-        session.genmax = new_profile.genmax
     return CommandResult(
         message=f"Switched to profile '{arg}'.",
         request_api_key=cfg.ephemeral_api_key_missing,
     )
 
 
+def sync_profile_settings(session: ChatSession, cfg: AppConfig) -> None:
+    """Install resolved limits and credentials without changing conversation history."""
+    session.ctx_size = cfg.ctx_size
+    session.genmax = cfg.genmax
+    sync_token_counter(session, cfg)
+
+
 def sync_token_counter(session: ChatSession, cfg: AppConfig) -> None:
-    """Refresh tokenization credentials from the active profile's effective key."""
+    """Refresh credentials, including discovery deferred until shared key entry."""
+    if session._counter is not None and cfg._discovery_pending and not cfg.ephemeral_api_key_missing:
+        resolve_limits(cfg)
+        session.ctx_size = cfg.ctx_size
+        session.genmax = cfg.genmax
     current = session._counter
     server_enabled = not cfg.ephemeral_api_key_missing
     if (
@@ -416,10 +425,9 @@ def _cmd_samplers(arg: str, cfg: AppConfig, session: ChatSession) -> CommandResu
     sub_arg = parts[1] if len(parts) > 1 else ""
 
     if sub == "save":
-        # Sync runtime state back to profile before saving.
+        # Runtime limit commands already mark profile limits explicit. Do not
+        # turn discovered session limits into persisted overrides here.
         cfg.profile.system_prompt = session.system_prompt
-        cfg.profile.ctx_size = session.ctx_size
-        cfg.profile.genmax = session.genmax
         try:
             save_profile(cfg)
             return CommandResult(message=f"Profile '{cfg.profile.name}' saved to {cfg.config_path}.")
@@ -768,7 +776,7 @@ def _cmd_list(session: ChatSession) -> CommandResult:
     return CommandResult(message="\n".join(out))
 
 
-def _cmd_models(arg: str, cfg: AppConfig) -> CommandResult:
+def _cmd_models(arg: str, session: ChatSession, cfg: AppConfig) -> CommandResult:
     arg = arg.strip()
     if not arg:
         if cfg.ephemeral_api_key_missing:
@@ -780,7 +788,7 @@ def _cmd_models(arg: str, cfg: AppConfig) -> CommandResult:
             return CommandResult(message="Failed to fetch models or no models found.")
         return CommandResult(model_choices=models, model_current=cfg.profile.model)
     else:
-        return CommandResult(message=apply_model_choice(cfg, arg))
+        return CommandResult(message=apply_model_choice(cfg, session, arg))
 
 
 def _cmd_btw(arg: str) -> CommandResult:

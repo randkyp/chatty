@@ -105,6 +105,20 @@ class AppConfig:
     # Stores the raw parsed TOML so we can write back on /save.
     _raw: dict[str, Any] = field(default_factory=dict, repr=False)
     _ephemeral_api_keys: EphemeralApiKeys = field(default_factory=EphemeralApiKeys, repr=False)
+    # Discovery is runtime state, not an explicit override to persist or carry
+    # to another model. Profile limits remain the user's configured values.
+    _model_metadata: dict[str, Any] = field(default_factory=dict, repr=False)
+    _discovery_pending: bool = field(default=False, repr=False)
+
+    @property
+    def ctx_size(self) -> int:
+        return (
+            self.profile.ctx_size if self.profile.ctx_size is not None else self._model_metadata.get("ctx_size", 8192)
+        )
+
+    @property
+    def genmax(self) -> int:
+        return self.profile.genmax if self.profile.genmax is not None else self._model_metadata.get("genmax", 0)
 
     @property
     def effective_api_key(self) -> str | None:
@@ -135,6 +149,7 @@ class AppConfig:
         profile, raw = load_profile_by_name(self.config_path, name)
         self.profile = profile
         self._raw = raw
+        resolve_limits(self)
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────
@@ -302,21 +317,17 @@ def load_config(argv: list[str] | None = None) -> AppConfig:
 
 
 def resolve_limits(cfg: AppConfig) -> None:
-    """Fill in ctx_size / genmax / model from server metadata if not set in profile."""
+    """Resolve the active model without turning inferred limits into overrides."""
     p = cfg.profile
-    if p.ctx_size and p.genmax and p.model:
-        return  # Everything already set, skip network call.
-
-    # An opted-in ephemeral profile must not make anonymous requests while its
-    # process-memory credential is absent.
-    meta = {} if cfg.ephemeral_api_key_missing else fetch_model_metadata(p.base_url, cfg.effective_api_key)
-
-    if p.ctx_size is None:
-        p.ctx_size = meta.get("ctx_size", 8192)
-    if p.genmax is None:
-        p.genmax = meta.get("genmax", 0)
+    cfg._model_metadata = {}
+    cfg._discovery_pending = cfg.ephemeral_api_key_missing
+    if cfg._discovery_pending:
+        return  # Retry discovery after key entry; do not install a default model.
+    if p.ctx_size is not None and p.genmax is not None and p.model:
+        return
+    cfg._model_metadata = fetch_model_metadata(p.base_url, cfg.effective_api_key, p.model)
     if not p.model:
-        p.model = meta.get("model_id", "default")
+        p.model = cfg._model_metadata.get("model_id")
 
 
 # ── Save back to TOML ────────────────────────────────────────────────────

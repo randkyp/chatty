@@ -22,7 +22,14 @@ from rich.text import Text
 from chatty.api import close_clients, stream_chat
 from chatty.chat_session import ChatSession
 from chatty.clipboard import ClipboardError, copy_text
-from chatty.commands import CommandResult, handle_command, is_command, save_session, sync_token_counter
+from chatty.commands import (
+    CommandResult,
+    handle_command,
+    is_command,
+    save_session,
+    sync_profile_settings,
+    sync_token_counter,
+)
 from chatty.config import (
     EPHEMERAL_KEY_REQUIRED,
     AppConfig,
@@ -192,7 +199,8 @@ def _handle_command_result(result: CommandResult, session: ChatSession, cfg: App
             print_system("API key unchanged.")
             return False
         cfg.set_ephemeral_api_key(api_key)
-        sync_token_counter(session, cfg)
+        resolve_limits(cfg)
+        sync_profile_settings(session, cfg)
         print_system(f"Ephemeral API key set for profile '{cfg.profile.name}'.")
         return False
 
@@ -229,7 +237,7 @@ def _handle_command_result(result: CommandResult, session: ChatSession, cfg: App
         selected = pick_model(choices, result.model_current)
         if selected is None:
             return False
-        print_system(apply_model_choice(cfg, selected))
+        print_system(apply_model_choice(cfg, session, selected))
         return False
 
     if result.load_messages is not None:
@@ -329,8 +337,8 @@ def main(argv: list[str] | None = None) -> None:
 
     session = ChatSession(
         system_prompt=cfg.profile.system_prompt,
-        ctx_size=cfg.profile.ctx_size if cfg.profile.ctx_size is not None else 8192,
-        genmax=cfg.profile.genmax if cfg.profile.genmax is not None else 0,
+        ctx_size=cfg.ctx_size,
+        genmax=cfg.genmax,
     )
     sync_token_counter(session, cfg)
 

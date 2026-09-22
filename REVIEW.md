@@ -67,7 +67,7 @@ Both cases were reproduced. The existing round-trip test covers only a non-null 
 
 **Direction:** Parse and validate into temporary values, distinguish an absent metadata field from an explicitly cleared value, then commit the whole restored state once. Check the few invariants consumed by rendering and context building, and reset pending/rollback state consistently. Test null-prompt round trips for JSON and JSONL and verify malformed loads leave the prior session untouched.
 
-### [ ] M3. Profile/model initialization has inconsistent ownership
+### [x] M3. Profile/model initialization has inconsistent ownership
 
 **Files:** `src/chatty/config.py` (`resolve_limits`, `switch_profile`); `src/chatty/commands.py` (`_cmd_profile`, `apply_model_choice`); `src/chatty/api.py` (`fetch_model_metadata`).
 
@@ -78,6 +78,8 @@ Additionally, metadata always comes from `models[0]`, even when the configured m
 **Why it matters:** The active profile and session can disagree, causing arbitrary clipping, provider context errors, or an invalid model request depending on how the user reached the configuration. The metadata problem is conditional on the provider exposing model-specific limits.
 
 **Direction:** Use one small profile-activation/resolution path for startup and switching. Resolve metadata for the selected model, distinguish explicit limits from inferred defaults, and deliberately synchronize the resulting session settings. Defer authenticated discovery until a required key is available. Test switching to an underspecified profile and selecting a non-first catalog model with different limits.
+
+**Resolution:** Startup, profile switches, model choices, and ephemeral-key entry now use the same metadata resolver. Catalog metadata matches the selected model; unknown models use fallback limits rather than another model's metadata. Inferred limits remain separate from explicit profile overrides, and activation synchronizes session limits and tokenization credentials. Discovery waits for required credentials, including keys entered in another browser session. Regression tests cover both clients' model pickers and key entry, startup/switch parity, explicit overrides, unavailable/malformed catalogs, and inferred-limit persistence.
 
 ## Fix ordering and overlap
 

@@ -146,7 +146,8 @@ def test_cmd_genmax(session, app_config):
     assert app_config.profile.genmax == 512
 
 
-def test_cmd_profile(session, app_config, tmp_path):
+def test_cmd_profile(session, app_config, tmp_path, respx_mock):
+    respx_mock.get("http://localhost:9000/v1/models").respond(503)
     config_file = tmp_path / "config.toml"
     config_file.write_text("""
 [profile.default]
@@ -172,7 +173,9 @@ genmax = 0
     assert session.genmax == 0
 
 
-def test_cmd_profile_requests_missing_ephemeral_key_once(session, app_config, tmp_path):
+def test_cmd_profile_requests_missing_ephemeral_key_once(session, app_config, tmp_path, respx_mock):
+    respx_mock.get("http://localhost:8080/v1/models").respond(503)
+    respx_mock.get("http://up/v1/models").respond(503)
     config_file = tmp_path / "config.toml"
     config_file.write_text(
         '[profile.default]\nbase_url = "http://localhost:8080"\n'

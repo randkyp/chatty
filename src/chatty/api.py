@@ -42,11 +42,11 @@ def close_clients() -> None:
     _CLIENT_CACHE.clear()
 
 
-def fetch_model_metadata(base_url: str, api_key: str | None) -> dict[str, Any]:
+def fetch_model_metadata(base_url: str, api_key: str | None, model_id: str | None = None) -> dict[str, Any]:
     """Try to fetch context length and max tokens from /v1/models.
 
-    Returns a dict that may contain 'ctx_size' and/or 'genmax' keys.
-    On any failure, returns an empty dict.
+    Match the selected model exactly, or discover the first model if unset.
+    Unknown models never borrow another model's limits. On failure, return {}.
     """
     headers = _auth_headers(api_key)
     result: dict[str, Any] = {}
@@ -55,25 +55,33 @@ def fetch_model_metadata(base_url: str, api_key: str | None) -> dict[str, Any]:
         if resp.status_code != 200:
             return result
         data = resp.json()
-        models = data.get("data", [])
-        if not models:
+        models = data.get("data", []) if isinstance(data, dict) else []
+        if not isinstance(models, list):
             return result
-        # Use the first model's metadata (or the only one).
-        meta = models[0]
+        meta = next(
+            (m for m in models if isinstance(m, dict) and (model_id is None or m.get("id") == model_id)),
+            None,
+        )
+        if meta is None:
+            return result
         # Different backends expose this differently.
         for key in ("context_length", "max_model_len", "context_window"):
             if key in meta:
-                result["ctx_size"] = int(meta[key])
+                value = int(meta[key])
+                if value > 0:
+                    result["ctx_size"] = value
                 break
         for key in ("max_tokens", "max_completion_tokens", "max_generation_len"):
             if key in meta:
-                result["genmax"] = int(meta[key])
+                value = int(meta[key])
+                if value >= 0:
+                    result["genmax"] = value
                 break
         # Grab the model id if available.
-        if "id" in meta:
+        if isinstance(meta.get("id"), str) and meta["id"].strip():
             result["model_id"] = meta["id"]
-    except (httpx.HTTPError, json.JSONDecodeError, KeyError, ValueError):
-        pass
+    except (httpx.HTTPError, json.JSONDecodeError, KeyError, ValueError, TypeError, OverflowError):
+        return {}
     return result
 
 

@@ -24,7 +24,14 @@ from fastapi.staticfiles import StaticFiles
 
 from chatty.api import stream_chat_async
 from chatty.chat_session import ChatSession
-from chatty.commands import ClientType, handle_command, is_command, save_session, sync_token_counter
+from chatty.commands import (
+    ClientType,
+    handle_command,
+    is_command,
+    save_session,
+    sync_profile_settings,
+    sync_token_counter,
+)
 from chatty.config import EPHEMERAL_KEY_REQUIRED, AppConfig, load_config, resolve_limits
 
 app = FastAPI()
@@ -42,8 +49,8 @@ async def get_index() -> HTMLResponse:
 def _build_session(cfg: AppConfig) -> ChatSession:
     session = ChatSession(
         system_prompt=cfg.profile.system_prompt,
-        ctx_size=cfg.profile.ctx_size if cfg.profile.ctx_size is not None else 8192,
-        genmax=cfg.profile.genmax if cfg.profile.genmax is not None else 0,
+        ctx_size=cfg.ctx_size,
+        genmax=cfg.genmax,
     )
     sync_token_counter(session, cfg)
     return session
@@ -360,7 +367,8 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                     await sender.send("system", "API key unchanged.")
                     continue
                 cfg.set_ephemeral_api_key(api_key)
-                sync_token_counter(session, cfg)
+                await asyncio.to_thread(resolve_limits, cfg)
+                sync_profile_settings(session, cfg)
                 await sender.send("system", f"Ephemeral API key set for profile '{cfg.profile.name}'.")
                 continue
 
@@ -370,15 +378,19 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                 model = req.get("model")
                 if not isinstance(model, str) or not model:
                     continue
-                confirmation = apply_model_choice(cfg, model)
+                confirmation = await asyncio.to_thread(apply_model_choice, cfg, session, model)
                 await sender.send("model_selected", confirmation)
                 continue
 
             if msg_type != "message":
                 continue
 
-            # Another connection may have changed this profile's shared key.
-            sync_token_counter(session, cfg)
+            # Another connection may have supplied a key for deferred discovery.
+            if cfg._discovery_pending and not cfg.ephemeral_api_key_missing:
+                await asyncio.to_thread(resolve_limits, cfg)
+                sync_profile_settings(session, cfg)
+            else:
+                sync_token_counter(session, cfg)
 
             text = (req.get("text") or "").strip()
             if not text and not req.get("images"):

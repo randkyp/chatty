@@ -65,7 +65,8 @@ def test_stream_and_render_collects_text(monkeypatch):
     assert usage == {"completion_tokens": 2}
 
 
-def test_apikey_prompt_sets_key_without_provider_validation(monkeypatch):
+def test_apikey_prompt_sets_key_and_tolerates_failed_discovery(monkeypatch, respx_mock):
+    respx_mock.get("http://up/v1/models").respond(503)
     cfg = AppConfig(
         config_path=None,
         profile=Profile(name="private", base_url="http://up", api_key_mode="ephemeral"),

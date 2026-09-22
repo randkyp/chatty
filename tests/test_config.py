@@ -170,8 +170,10 @@ base_url = "http://localhost:9000"
 # --- switch_profile / resolve_limits / save_profile None-sampler skip ---
 
 
-def test_switch_profile(tmp_path):
+def test_switch_profile(tmp_path, respx_mock):
     from chatty.config import AppConfig, Profile
+
+    respx_mock.get("http://b/v1/models").respond(503)
 
     cfg_path = tmp_path / "config.toml"
     cfg_path.write_text(
@@ -184,8 +186,10 @@ def test_switch_profile(tmp_path):
     assert cfg._raw["profile"]["b"]["base_url"] == "http://b"
 
 
-def test_ephemeral_keys_survive_switches_and_are_shared_by_web_copies(tmp_path):
+def test_ephemeral_keys_survive_switches_and_are_shared_by_web_copies(tmp_path, respx_mock):
     from chatty.config import AppConfig, Profile
+
+    respx_mock.get("http://a/v1/models").respond(503)
 
     cfg_path = tmp_path / "config.toml"
     cfg_path.write_text(
@@ -227,8 +231,10 @@ def test_resolve_limits_uses_metadata(respx_mock):
     )
     cfg = AppConfig(config_path=None, profile=Profile(name="p", base_url="http://up"))
     resolve_limits(cfg)
-    assert cfg.profile.ctx_size == 4096
-    assert cfg.profile.genmax == 512
+    assert cfg.ctx_size == 4096
+    assert cfg.genmax == 512
+    assert cfg.profile.ctx_size is None
+    assert cfg.profile.genmax is None
     assert cfg.profile.model == "m1"
 
 
@@ -240,9 +246,11 @@ def test_resolve_limits_skips_remote_metadata_without_ephemeral_key(respx_mock):
         profile=Profile(name="p", base_url="http://up", api_key_mode="ephemeral"),
     )
     resolve_limits(cfg)
-    assert cfg.profile.ctx_size == 8192
-    assert cfg.profile.genmax == 0
-    assert cfg.profile.model == "default"
+    assert cfg.ctx_size == 8192
+    assert cfg.genmax == 0
+    assert cfg.profile.ctx_size is None
+    assert cfg.profile.genmax is None
+    assert cfg.profile.model is None
     assert not respx_mock.calls
 
 
