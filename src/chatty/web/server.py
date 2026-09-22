@@ -14,6 +14,7 @@ import copy
 import json
 import re
 import secrets
+import threading
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -64,6 +65,7 @@ class _WebSession:
 
 
 _ID_RE = re.compile(r"^[A-Za-z0-9_-]{16,128}$")
+_AUTOSAVE_LOCK = threading.Lock()
 
 
 def _valid_id(value: str | None) -> str | None:
@@ -105,13 +107,20 @@ def _acquire_web_session(
     return state, restored
 
 
+def _save_autosave(session: ChatSession) -> Path:
+    path = Path.home() / ".config" / "chatty" / "session.json"
+    # Multiple isolated browser sessions may disconnect together. Serialize
+    # their writes so session.json is always a complete session.
+    with _AUTOSAVE_LOCK:
+        save_session(session, path)
+    return path
+
+
 def _autosave_web_session(cfg: AppConfig) -> Path | None:
     state: _WebSession | None = getattr(app.state, "current_web_session", None)
     if not cfg.autosave or state is None or not state.chat.messages:
         return None
-    path = Path.home() / ".config" / "chatty" / "session.json"
-    save_session(state.chat, path)
-    return path
+    return _save_autosave(state.chat)
 
 
 class _Sender:
@@ -414,6 +423,11 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
             await current_task
         if state.connection is connection:
             state.connection = None
+            if cfg.autosave and session.messages:
+                try:
+                    await asyncio.to_thread(_save_autosave, session)
+                except OSError as e:
+                    print(f"Autosave failed: {e}")
 
 
 def run_server(argv: list[str] | None = None, *, host: str = "127.0.0.1", port: int = 8000) -> None:

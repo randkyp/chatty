@@ -157,6 +157,24 @@ def test_simultaneous_clients_cannot_share_conversation(client, respx_mock):
     assert [message["content"] for message in payload["messages"]] == ["private history", "answer", "still mine"]
 
 
+def test_web_autosave_saves_session_on_disconnect(client, respx_mock, tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    client.app.state.cfg.autosave = True
+    _mock_upstream(respx_mock, 'data: {"choices": [{"delta": {"content": "saved"}}]}\n\ndata: [DONE]\n')
+
+    with client.websocket_connect("/ws") as ws:
+        ws.receive_json()
+        ws.send_json({"type": "message", "text": "save on disconnect"})
+        while ws.receive_json()["type"] != "submission_done":
+            pass
+
+    path = tmp_path / ".config" / "chatty" / "session.json"
+    assert json.loads(path.read_text())["messages"] == [
+        {"role": "user", "content": "save on disconnect"},
+        {"role": "assistant", "content": "saved"},
+    ]
+
+
 def test_web_autosave_saves_current_session_on_exit(cfg, tmp_path, monkeypatch):
     monkeypatch.setenv("HOME", str(tmp_path))
     cfg.autosave = True
