@@ -1,6 +1,7 @@
 from unittest.mock import MagicMock
 
 import httpx
+import pytest
 
 from chatty.chat_session import ChatSession, TokenCounter
 
@@ -53,6 +54,25 @@ def test_token_counter_transient_failure_falls_back(respx_mock):
 
     # Second count encounters transient 500 error, falls back to tiktoken (1 token)
     assert counter.count("hello") == 1
+
+
+def test_token_counter_counts_special_markers_as_ordinary_text():
+    counter = TokenCounter(base_url="http://localhost:8080", server_enabled=False)
+    text = "Explain <|endoftext|> and <|user|>"
+
+    assert counter.count(text) == len(counter._get_tiktoken().encode_ordinary(text))
+
+
+def test_token_counter_count_messages_allows_special_markers_in_every_role():
+    counter = TokenCounter(base_url="http://localhost:8080", server_enabled=False)
+    marker = "Discuss <|endoftext|>"
+    messages = [
+        {"role": "system", "content": marker},
+        {"role": "user", "content": marker},
+        {"role": "assistant", "content": marker},
+    ]
+
+    assert counter.count_messages(messages) == 3 * (4 + counter.count(marker)) + 2
 
 
 def test_token_counter_count_messages():
@@ -289,6 +309,24 @@ def test_stage_user_message_bust_returns_none_and_revert_restores():
     assert payload is None
     session.revert_last_user_message()
     assert session.messages == []
+
+
+def test_stage_user_message_restores_state_when_preparation_fails():
+    class _FailingCounter:
+        def count_messages(self, messages):
+            raise ValueError("cannot count")
+
+    session = ChatSession()
+    session.add_user_message("existing draft")
+    pending = {"data_url": "data:image/png;base64,old"}
+    session.pending_images.append(pending)
+    session.set_counter(_FailingCounter())
+
+    with pytest.raises(ValueError, match="cannot count"):
+        session.stage_user_message("new prompt")
+
+    assert session.messages == [{"role": "user", "content": "existing draft"}]
+    assert session.pending_images == [pending]
 
 
 # --- Context-clipping edge cases ---

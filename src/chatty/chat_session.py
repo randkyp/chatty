@@ -101,7 +101,10 @@ class TokenCounter:
                 pass
             # Fall through to tiktoken on transient failure.
 
-        ans = len(self._get_tiktoken().encode(text))
+        # Conversation text is data, not a tiktoken control sequence.  In
+        # particular, model-template markers such as <|endoftext|> can appear
+        # in prompts and model output and must not make counting fail.
+        ans = len(self._get_tiktoken().encode_ordinary(text))
         self._cache[cache_key] = ans
         self._enforce_cache_size()
         return ans
@@ -255,10 +258,24 @@ class ChatSession:
 
         text, text_images = extract_images_from_text(text)
         attached = list(self.pending_images) + text_images + list(extra_images or [])
-        self.add_user_message(text, images=attached)
-        self.pending_images.clear()
-        payload = self.build_payload_messages()
-        return payload, attached
+        pending_before = list(self.pending_images)
+        previous_revert_token = self._last_user_add
+        staged = False
+        try:
+            self.add_user_message(text, images=attached)
+            staged = True
+            self.pending_images.clear()
+            payload = self.build_payload_messages()
+            return payload, attached
+        except Exception:
+            # Building the payload counts user/system/history content and can
+            # fail after staging. Keep a failed preparation from consuming a
+            # draft or leaving a half-added user turn behind.
+            if staged:
+                self.revert_last_user_message()
+            self.pending_images[:] = pending_before
+            self._last_user_add = previous_revert_token
+            raise
 
     def clear(self) -> None:
         """Clear user/assistant history (system prompt is re-injected at send time)."""

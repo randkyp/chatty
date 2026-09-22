@@ -154,6 +154,32 @@ def test_stream_is_blocked_locally_without_ephemeral_key(monkeypatch):
     assert "/apikey" in errors[0]
 
 
+def test_main_surfaces_preparation_failure_and_continues(monkeypatch):
+    from types import SimpleNamespace
+
+    cfg = AppConfig(config_path=None, profile=Profile(name="p", base_url="http://x"))
+    inputs = iter(["prompt", None])
+    errors = []
+    monkeypatch.setattr(main, "parse_args", lambda _: SimpleNamespace(web=False))
+    monkeypatch.setattr(main, "load_config", lambda _: cfg)
+    monkeypatch.setattr(main, "resolve_limits", lambda _: None)
+    monkeypatch.setattr(main, "print_welcome", lambda *args, **kwargs: None)
+    monkeypatch.setattr(main, "create_prompt_session", lambda **kwargs: object())
+    monkeypatch.setattr(main, "get_user_input", lambda _: next(inputs))
+    monkeypatch.setattr(main, "print_error", errors.append)
+    monkeypatch.setattr(main, "print_system", lambda _: None)
+    monkeypatch.setattr(main, "close_clients", lambda: None)
+
+    def fail_to_prepare(self, text):
+        raise ValueError("cannot count")
+
+    monkeypatch.setattr(ChatSession, "stage_user_message", fail_to_prepare)
+
+    main.main([])
+
+    assert errors == ["Request failed: cannot count"]
+
+
 def test_main_preprompts_for_missing_ephemeral_key(monkeypatch):
     from types import SimpleNamespace
 

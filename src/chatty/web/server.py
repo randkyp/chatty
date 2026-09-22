@@ -320,7 +320,9 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                     if quit_requested:
                         await websocket.close()
                 except Exception as e:  # noqa: BLE001
-                    if not command:
+                    # stage_user_message rolls back preparation failures. Only
+                    # revert here when a later request step mutated history.
+                    if not command and session.messages != before:
                         session.revert_last_user_message()
                     await sender.send("error", f"Request failed: {e}")
                 finally:

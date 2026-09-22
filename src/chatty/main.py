@@ -382,7 +382,11 @@ def main(argv: list[str] | None = None) -> None:
                 text = text[1:]
 
             # ── Send message to API ─────────────────────────────────────────
-            payload_messages, attached = session.stage_user_message(text)
+            try:
+                payload_messages, attached = session.stage_user_message(text)
+            except Exception as e:  # noqa: BLE001 - keep preparation failures in the REPL
+                print_error(f"Request failed: {e}")
+                continue
             for img in attached:
                 if img.get("path"):
                     print_system(f" -> Attached image: {img['path']}")
