@@ -95,6 +95,85 @@ def test_websocket_streams_response(client, respx_mock):
     assert "".join(chunks) == "Hello there"
 
 
+def test_websocket_reconnect_restores_history_and_settings(client, respx_mock):
+    _mock_upstream(respx_mock, 'data: {"choices": [{"delta": {"content": "answer"}}]}\n\ndata: [DONE]\n')
+    session_id = "browser-session-123456"
+    client_id = "browser-client-123456"
+    url = f"/ws?session_id={session_id}&client_id={client_id}"
+
+    with client.websocket_connect(url) as ws:
+        welcome = ws.receive_json()
+        assert welcome["restored"] is False
+        ws.send_json({"type": "model_select", "model": "changed-model"})
+        ws.receive_json()
+        ws.send_json({"type": "message", "text": "first"})
+        while ws.receive_json()["type"] != "submission_done":
+            pass
+
+    with client.websocket_connect(url) as ws:
+        welcome = ws.receive_json()
+        assert welcome["restored"] is True
+        assert welcome["history"] == [
+            {"role": "user", "content": "first"},
+            {"role": "assistant", "content": "answer"},
+        ]
+        ws.send_json({"type": "message", "text": "second"})
+        while ws.receive_json()["type"] != "submission_done":
+            pass
+
+    payload = json.loads(
+        [call.request for call in respx_mock.calls if call.request.url.path == "/v1/chat/completions"][-1].content
+    )
+    assert payload["model"] == "changed-model"
+    assert payload["messages"] == [
+        {"role": "user", "content": "first"},
+        {"role": "assistant", "content": "answer"},
+        {"role": "user", "content": "second"},
+    ]
+
+
+def test_simultaneous_clients_cannot_share_conversation(client, respx_mock):
+    _mock_upstream(respx_mock, 'data: {"choices": [{"delta": {"content": "answer"}}]}\n\ndata: [DONE]\n')
+    session_id = "shared-session-123456"
+    with client.websocket_connect(f"/ws?session_id={session_id}&client_id=first-client-123456") as first:
+        first_welcome = first.receive_json()
+        first.send_json({"type": "message", "text": "private history"})
+        while first.receive_json()["type"] != "submission_done":
+            pass
+
+        with client.websocket_connect(f"/ws?session_id={session_id}&client_id=second-client-123456") as second:
+            second_welcome = second.receive_json()
+            assert second_welcome["session_id"] != first_welcome["session_id"]
+            assert second_welcome["restored"] is False
+            assert second_welcome["history"] == []
+
+        first.send_json({"type": "message", "text": "still mine"})
+        while first.receive_json()["type"] != "submission_done":
+            pass
+
+    payload = json.loads(
+        [call.request for call in respx_mock.calls if call.request.url.path == "/v1/chat/completions"][-1].content
+    )
+    assert [message["content"] for message in payload["messages"]] == ["private history", "answer", "still mine"]
+
+
+def test_web_autosave_saves_current_session_on_exit(cfg, tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    cfg.autosave = True
+    monkeypatch.setattr(server, "load_config", lambda argv: cfg)
+    monkeypatch.setattr(server, "resolve_limits", lambda config: None)
+
+    def serve_then_exit(app, **kwargs):
+        state, _ = server._acquire_web_session(cfg, "autosave-session-123456", "autosave-client-123456")
+        state.chat.add_user_message("save me")
+
+    monkeypatch.setattr("uvicorn.run", serve_then_exit)
+    server.run_server(["--web", "--autosave"])
+
+    path = tmp_path / ".config" / "chatty" / "session.json"
+    assert json.loads(path.read_text())["messages"] == [{"role": "user", "content": "save me"}]
+
+
 def test_websocket_command(client, respx_mock):
     _mock_upstream(respx_mock, "data: [DONE]\n")
     with client.websocket_connect("/ws") as ws:

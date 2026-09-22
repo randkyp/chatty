@@ -42,7 +42,7 @@ The exception occurs after staging has mutated history and cleared pending image
 
 ## Medium
 
-### [ ] M1. Automatic reconnect silently starts a different conversation behind the old transcript
+### [x] M1. Automatic reconnect silently starts a different conversation behind the old transcript
 
 **Files:** `src/chatty/web/server.py` (`websocket_endpoint`); `src/chatty/web/public/app.js` (`connect`, `welcome` handling).
 

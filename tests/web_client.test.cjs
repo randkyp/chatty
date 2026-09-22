@@ -37,6 +37,8 @@ function client() {
         marked: { setOptions() {}, use() {}, parse: s => s },
         DOMPurify: { sanitize: s => s },
         localStorage: { getItem() {}, setItem() {} },
+        sessionStorage: { getItem() {}, setItem() {} },
+        URLSearchParams,
         setInterval: () => 1, clearInterval() {}, setTimeout() {},
         requestAnimationFrame: f => f(),
     });
@@ -45,6 +47,14 @@ function client() {
 }
 
 const exchange = JSON.stringify([{ role: 'user', content: 'question' }, { role: 'assistant', content: 'answer' }]);
+
+test('welcome restores the server conversation', () => {
+    const run = client();
+    run(`handleServerMessage({type:'welcome', content:'Welcome', restored:true, session_id:'restored-id', history:${exchange}})`);
+    assert.equal(run('conversation.children.length'), 2);
+    assert.equal(run('conversation.children[0].textContent'), '> question');
+    assert.equal(run("history.children.some(c => c.textContent === 'Welcome Conversation restored.')"), true);
+});
 
 test('/undo replaces conversation, not the command display', () => {
     const run = client();

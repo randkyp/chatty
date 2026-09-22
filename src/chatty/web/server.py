@@ -3,9 +3,8 @@ Web UI server: a FastAPI + WebSocket front-end that reuses the CLI's session,
 command, and API machinery.
 
 Run via ``chatty --web`` (see chatty.main) or ``python -m chatty.web.server``.
-Config is loaded once at startup and shared across connections; each WebSocket
-gets its own ChatSession (and a private copy of the config it may mutate via
-slash commands).
+Config is loaded once at startup and shared across connections. Browser
+sessions retain their own ChatSession and mutable config across reconnects.
 """
 
 from __future__ import annotations
@@ -13,6 +12,9 @@ from __future__ import annotations
 import asyncio
 import copy
 import json
+import re
+import secrets
+from dataclasses import dataclass
 from pathlib import Path
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
@@ -21,7 +23,7 @@ from fastapi.staticfiles import StaticFiles
 
 from chatty.api import stream_chat_async
 from chatty.chat_session import ChatSession
-from chatty.commands import ClientType, handle_command, is_command, sync_token_counter
+from chatty.commands import ClientType, handle_command, is_command, save_session, sync_token_counter
 from chatty.config import EPHEMERAL_KEY_REQUIRED, AppConfig, load_config, resolve_limits
 
 app = FastAPI()
@@ -50,6 +52,66 @@ def _welcome_text(cfg: AppConfig, session: ChatSession) -> str:
     gen_display = "unlimited" if session.genmax == 0 else session.genmax
     model = cfg.profile.model or "(auto)"
     return f"Welcome to chatty ({cfg.profile.name} - {model}). Context: {session.ctx_size}, Gen: {gen_display}."
+
+
+@dataclass
+class _WebSession:
+    session_id: str
+    client_id: str
+    cfg: AppConfig
+    chat: ChatSession
+    connection: object | None = None
+
+
+_ID_RE = re.compile(r"^[A-Za-z0-9_-]{16,128}$")
+
+
+def _valid_id(value: str | None) -> str | None:
+    return value if value and _ID_RE.fullmatch(value) else None
+
+
+def _acquire_web_session(
+    base_cfg: AppConfig, session_id: str | None, client_id: str | None
+) -> tuple[_WebSession, bool]:
+    """Restore a browser's state, while keeping simultaneous browser sessions separate."""
+    store_cfg = getattr(app.state, "web_sessions_cfg", None)
+    if store_cfg is not base_cfg:
+        app.state.web_sessions = {}
+        app.state.web_sessions_cfg = base_cfg
+
+    store: dict[str, _WebSession] = app.state.web_sessions
+    requested_id = _valid_id(session_id)
+    browser_id = _valid_id(client_id) or secrets.token_urlsafe(24)
+    state = store.get(requested_id) if requested_id else None
+    restored = state is not None
+
+    # A duplicated tab can inherit sessionStorage. Fork it rather than letting
+    # two live pages mutate one conversation. A reconnect from the same page
+    # keeps its client_id and may replace a not-yet-cleaned-up socket.
+    if state is not None and state.connection is not None and state.client_id != browser_id:
+        state = None
+        restored = False
+
+    if state is None:
+        new_id = requested_id if requested_id not in store else secrets.token_urlsafe(24)
+        state_cfg = copy.deepcopy(base_cfg)
+        state = _WebSession(new_id or secrets.token_urlsafe(24), browser_id, state_cfg, _build_session(state_cfg))
+        store[state.session_id] = state
+    else:
+        state.client_id = browser_id
+
+    state.connection = object()
+    app.state.current_web_session = state
+    return state, restored
+
+
+def _autosave_web_session(cfg: AppConfig) -> Path | None:
+    state: _WebSession | None = getattr(app.state, "current_web_session", None)
+    if not cfg.autosave or state is None or not state.chat.messages:
+        return None
+    path = Path.home() / ".config" / "chatty" / "session.json"
+    save_session(state.chat, path)
+    return path
 
 
 class _Sender:
@@ -236,14 +298,24 @@ async def _handle_message(
 async def websocket_endpoint(websocket: WebSocket) -> None:
     await websocket.accept()
 
-    # Reuse the config resolved once at startup; copy so per-connection slash
-    # commands (e.g. /profile) don't bleed across tabs.
     base_cfg: AppConfig = getattr(app.state, "cfg", None) or load_config([])
-    cfg = copy.deepcopy(base_cfg)
-    session = _build_session(cfg)
+    state, restored = _acquire_web_session(
+        base_cfg,
+        websocket.query_params.get("session_id"),
+        websocket.query_params.get("client_id"),
+    )
+    cfg = state.cfg
+    session = state.chat
+    connection = state.connection
 
     sender = _Sender(websocket)
-    await sender.send("welcome", _welcome_text(cfg, session))
+    await sender.send(
+        "welcome",
+        _welcome_text(cfg, session),
+        session_id=state.session_id,
+        restored=restored,
+        history=session.messages,
+    )
     if cfg.ephemeral_api_key_missing:
         await sender.send("api_key_prompt", "")
 
@@ -259,6 +331,7 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                 continue
 
             msg_type = req.get("type")
+            app.state.current_web_session = state
 
             if msg_type == "cancel":
                 if streaming.is_set() and current_task is not None:
@@ -339,6 +412,8 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
         if streaming.is_set() and current_task is not None:
             current_task.cancel()
             await current_task
+        if state.connection is connection:
+            state.connection = None
 
 
 def run_server(argv: list[str] | None = None, *, host: str = "127.0.0.1", port: int = 8000) -> None:
@@ -348,7 +423,16 @@ def run_server(argv: list[str] | None = None, *, host: str = "127.0.0.1", port: 
     cfg = load_config(argv)
     resolve_limits(cfg)
     app.state.cfg = cfg
-    uvicorn.run(app, host=host, port=port)
+    app.state.web_sessions = {}
+    app.state.web_sessions_cfg = cfg
+    app.state.current_web_session = None
+    try:
+        uvicorn.run(app, host=host, port=port)
+    finally:
+        try:
+            _autosave_web_session(cfg)
+        except OSError as e:
+            print(f"Autosave failed: {e}")
 
 
 if __name__ == "__main__":

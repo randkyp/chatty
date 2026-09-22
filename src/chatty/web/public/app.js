@@ -18,6 +18,16 @@ let reconnectDelay = 500;            // ms, backs off to a cap
 let reconnectAttempts = 0;
 let manualClose = false;
 
+const WEB_SESSION_KEY = 'chatty-web-session';
+function randomId() {
+    if (typeof crypto !== 'undefined' && crypto.randomUUID) return crypto.randomUUID();
+    return `${Date.now()}-${Math.random().toString(36).slice(2)}-${Math.random().toString(36).slice(2)}`;
+}
+let webSessionId = null;
+try { webSessionId = sessionStorage.getItem(WEB_SESSION_KEY); } catch { /* unavailable */ }
+if (!webSessionId) webSessionId = randomId();
+const webClientId = randomId();
+
 let currentAssistantDiv = null;
 let currentAssistantContent = '';
 let thinkingInterval = null;
@@ -318,7 +328,8 @@ function openModelPicker(models, current) {
 // ── WebSocket with auto-reconnect ───────────────────────────────────────────
 function connect() {
     const scheme = window.location.protocol === 'https:' ? 'wss' : 'ws';
-    ws = new WebSocket(`${scheme}://${window.location.host}/ws`);
+    const query = new URLSearchParams({ session_id: webSessionId, client_id: webClientId });
+    ws = new WebSocket(`${scheme}://${window.location.host}/ws?${query}`);
 
     ws.onopen = () => {
         reconnectDelay = 500;
@@ -357,8 +368,12 @@ function connect() {
 function handleServerMessage(data) {
     switch (data.type) {
         case 'welcome':
-            renderHistory([]);
-            appendSystemMessage(`${data.content} New connection: context and settings reset.`);
+            if (data.session_id) {
+                webSessionId = data.session_id;
+                try { sessionStorage.setItem(WEB_SESSION_KEY, webSessionId); } catch { /* unavailable */ }
+            }
+            renderHistory(data.history || []);
+            appendSystemMessage(data.restored ? `${data.content} Conversation restored.` : data.content);
             break;
         case 'system':
             appendSystemMessage(data.content);
