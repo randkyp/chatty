@@ -337,6 +337,45 @@ def test_disconnect_closes_silent_stream(client, respx_mock):
     assert closed.wait(3)
 
 
+@pytest.mark.timeout(10)
+def test_payload_tokenization_does_not_block_websocket_loop(client, respx_mock, monkeypatch):
+    """Slow token counting during payload build must not stall Stop or other frames."""
+    from chatty.chat_session import TokenCounter
+
+    tokenize_started = threading.Event()
+    tokenize_release = threading.Event()
+    original_count = TokenCounter.count
+
+    def slow_count(self, text):
+        if text:
+            tokenize_started.set()
+            assert tokenize_release.wait(5)
+        return original_count(self, text)
+
+    monkeypatch.setattr(TokenCounter, "count", slow_count)
+    _mock_upstream(respx_mock, 'data: {"choices": [{"delta": {"content": "ok"}}]}\n\ndata: [DONE]\n')
+
+    with client.websocket_connect("/ws") as ws:
+        ws.receive_json()  # welcome
+        ws.send_json({"type": "message", "text": "hello"})
+        assert tokenize_started.wait(3)
+
+        # Event loop is free while tokenization runs in a worker thread.
+        ws.send_json({"type": "model_select", "model": "other-model"})
+        assert ws.receive_json() == {"type": "model_selected", "content": "Model: other-model"}
+        ws.send_json({"type": "cancel"})  # receivable mid-tokenize (no-op if stream not started)
+
+        tokenize_release.set()
+        seen = []
+        for _ in range(20):
+            message = ws.receive_json()
+            seen.append(message["type"])
+            if message["type"] == "submission_done":
+                break
+        assert "stream_end" in seen
+        assert "submission_done" in seen
+
+
 def test_websocket_ephemeral_key_authenticates_tokenize_and_chat(tmp_path, respx_mock):
     profile = Profile(
         name="private",

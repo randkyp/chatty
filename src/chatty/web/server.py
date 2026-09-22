@@ -256,7 +256,7 @@ async def _handle_message(
             return False
 
         if result.resend_user:
-            payload = session.build_payload_messages()
+            payload = await asyncio.to_thread(session.build_payload_messages)
             if payload is None:
                 await sender.send("warning", "Context budget exceeded.")
             else:
@@ -290,7 +290,11 @@ async def _handle_message(
         text = text[1:]
 
     # ── Normal send ─────────────────────────────────────────────────────────
-    payload_messages, attached = session.stage_user_message(text, extra_images=_coerce_images(raw_images))
+    # Payload construction counts tokens (possibly via blocking /tokenize HTTP);
+    # keep it off the event loop so Stop and other frames stay receivable.
+    payload_messages, attached = await asyncio.to_thread(
+        session.stage_user_message, text, extra_images=_coerce_images(raw_images)
+    )
     for img in attached:
         label = img["path"] if img.get("path") else "clipboard/upload"
         await sender.send("system", f" -> Attached image: {label}")
