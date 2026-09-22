@@ -54,7 +54,7 @@ A connection interruption or local server restart is enough to cause this; multi
 
 **Dependency:** H2's authoritative transcript updates would make reset handling easier and can eliminate the misleading-display portion of this finding. They do not by themselves preserve session state across connections. If explicit reset is chosen, reconnect persistence is unnecessary.
 
-### [ ] M2. Session loading is neither a faithful round trip nor an all-or-nothing operation
+### [x] M2. Session loading is neither a faithful round trip nor an all-or-nothing operation
 
 **Files:** `src/chatty/commands.py` (`save_session`, `_cmd_load_session`); `tests/test_commands.py`.
 

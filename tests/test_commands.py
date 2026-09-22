@@ -263,6 +263,71 @@ def test_cmd_save_and_load_session(session, app_config, tmp_path):
     assert new_session.messages[0]["content"] == "Persisted Msg"
 
 
+@pytest.mark.parametrize("suffix", [".json", ".jsonl"])
+def test_cmd_save_and_load_session_roundtrips_cleared_system_prompt(session, app_config, tmp_path, suffix):
+    from chatty.commands import save_session
+
+    saved = ChatSession(system_prompt=None, ctx_size=5000, genmax=400)
+    saved.add_user_message("no instructions")
+    path = tmp_path / f"session{suffix}"
+    save_session(saved, path)
+
+    session.add_user_message("old conversation")
+    session.pending_images.append({"data_url": "draft"})
+    assert session._last_user_add is not None
+
+    result = handle_command(f"/load {path}", session, app_config)
+
+    assert "Session restored" in result.message
+    assert session.system_prompt is None
+    assert app_config.profile.system_prompt is None
+    assert session.messages == [{"role": "user", "content": "no instructions"}]
+    assert session.pending_images == []
+    assert session._last_user_add is None
+
+
+def test_cmd_load_without_system_prompt_metadata_preserves_current_prompt(session, app_config, tmp_path):
+    path = tmp_path / "legacy.json"
+    path.write_text('{"messages": [{"role": "user", "content": "hello"}]}')
+
+    result = handle_command(f"/load {path}", session, app_config)
+
+    assert "Session restored" in result.message
+    assert session.system_prompt == "Initial Sys"
+    assert app_config.profile.system_prompt == "Initial Sys"
+
+
+@pytest.mark.parametrize(
+    "data",
+    [
+        '{"messages": null}',
+        '{"messages": [{"role": "user"}]}',
+        '{"messages": [{"role": "tool", "content": "bad"}]}',
+        '{"messages": [{"role": "user", "content": [{"type": "text", "text": 3}]}]}',
+        '{"system_prompt": "replacement", "ctx_size": "large", "messages": []}',
+    ],
+)
+def test_cmd_load_malformed_session_is_atomic(session, app_config, tmp_path, data):
+    session.add_user_message("keep me")
+    session.pending_images.append({"data_url": "keep draft"})
+    old_messages = [message.copy() for message in session.messages]
+    old_revert_token = session._last_user_add
+    old_profile = (app_config.profile.system_prompt, app_config.profile.ctx_size, app_config.profile.genmax)
+    path = tmp_path / "bad.json"
+    path.write_text(data)
+
+    result = handle_command(f"/load {path}", session, app_config)
+
+    assert result.message.startswith("Failed to load session:")
+    assert session.messages == old_messages
+    assert session.system_prompt == "Initial Sys"
+    assert session.ctx_size == 4096
+    assert session.genmax == 256
+    assert session.pending_images == [{"data_url": "keep draft"}]
+    assert session._last_user_add == old_revert_token
+    assert (app_config.profile.system_prompt, app_config.profile.ctx_size, app_config.profile.genmax) == old_profile
+
+
 def test_cmd_image_file_not_found(session, app_config):
     res = handle_command("/image /nonexistent/file.png", session, app_config)
     assert "File not found" in res.message

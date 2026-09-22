@@ -499,6 +499,82 @@ def save_session(session: ChatSession, path: Path) -> None:
             json.dump(data, f, indent=2, ensure_ascii=False)
 
 
+_MISSING = object()
+
+
+def _validate_session_messages(messages: Any) -> list[dict[str, Any]]:
+    """Validate the small message schema produced and consumed by ChatSession."""
+    if not isinstance(messages, list):
+        raise ValueError("'messages' must be a list")
+
+    for index, message in enumerate(messages):
+        if not isinstance(message, dict):
+            raise ValueError(f"message {index + 1} must be an object")
+        if message.get("role") not in ("user", "assistant"):
+            raise ValueError(f"message {index + 1} has an invalid role")
+        content = message.get("content", _MISSING)
+        if isinstance(content, str):
+            continue
+        if not isinstance(content, list):
+            raise ValueError(f"message {index + 1} content must be text or a list of parts")
+        for part_index, part in enumerate(content):
+            if not isinstance(part, dict):
+                raise ValueError(f"message {index + 1} part {part_index + 1} must be an object")
+            part_type = part.get("type")
+            if part_type == "text" and isinstance(part.get("text"), str):
+                continue
+            image_url = part.get("image_url")
+            if part_type == "image_url" and isinstance(image_url, dict) and isinstance(image_url.get("url"), str):
+                continue
+            raise ValueError(f"message {index + 1} part {part_index + 1} is invalid")
+    return messages
+
+
+def _validate_session_metadata(name: str, value: Any) -> None:
+    if name == "system_prompt":
+        if value is not None and not isinstance(value, str):
+            raise ValueError("'system_prompt' must be text or null")
+    elif not isinstance(value, int) or isinstance(value, bool):
+        raise ValueError(f"'{name}' must be an integer")
+
+
+def _read_session(path: Path) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """Parse and validate a saved session without mutating live state."""
+    metadata: dict[str, Any] = {}
+    messages: Any = []
+
+    if path.suffix == ".jsonl":
+        messages = []
+        with open(path, "r", encoding="utf-8") as f:
+            for line_number, line in enumerate(f, 1):
+                if not line.strip():
+                    continue
+                data = json.loads(line)
+                if not isinstance(data, dict):
+                    raise ValueError(f"line {line_number} must contain an object")
+                if "role" in data or "content" in data:
+                    messages.append(data)
+                else:
+                    for name in ("system_prompt", "ctx_size", "genmax"):
+                        if name in data:
+                            metadata[name] = data[name]
+    else:
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        if isinstance(data, dict):
+            messages = data.get("messages", [])
+            metadata = {name: data[name] for name in ("system_prompt", "ctx_size", "genmax") if name in data}
+        elif isinstance(data, list):
+            messages = data
+        else:
+            raise ValueError("session must be an object or a list of messages")
+
+    validated_messages = _validate_session_messages(messages)
+    for name, value in metadata.items():
+        _validate_session_metadata(name, value)
+    return validated_messages, metadata
+
+
 def _cmd_load_session(arg: str, session: ChatSession, cfg: AppConfig) -> CommandResult:
     home_config_dir = Path.home() / ".config" / "chatty"
     arg = arg.strip()
@@ -555,53 +631,15 @@ def _cmd_load_session(arg: str, session: ChatSession, cfg: AppConfig) -> Command
             return CommandResult(message=f"No saved session found in {home_config_dir} or current directory.")
 
     try:
-        messages = []
-        system_prompt = None
-        ctx_size = None
-        genmax = None
+        messages, metadata = _read_session(resolved_path)
 
-        if resolved_path.suffix == ".jsonl":
-            with open(resolved_path, "r", encoding="utf-8") as f:
-                for line in f:
-                    if not line.strip():
-                        continue
-                    data = json.loads(line)
-                    if "role" in data and "content" in data:
-                        messages.append(data)
-                    else:
-                        if "system_prompt" in data:
-                            system_prompt = data["system_prompt"]
-                        if "ctx_size" in data:
-                            ctx_size = data["ctx_size"]
-                        if "genmax" in data:
-                            genmax = data["genmax"]
-        else:
-            with open(resolved_path, "r", encoding="utf-8") as f:
-                data = json.load(f)
-            if isinstance(data, dict):
-                system_prompt = data.get("system_prompt")
-                ctx_size = data.get("ctx_size")
-                genmax = data.get("genmax")
-                messages = data.get("messages", [])
-            elif isinstance(data, list):
-                messages = data
-
+        # Commit only after the complete file has parsed and validated.
         session.messages = messages
-        if system_prompt is not None:
-            session.system_prompt = system_prompt
-        if ctx_size is not None:
-            session.ctx_size = ctx_size
-        if genmax is not None:
-            session.genmax = genmax
-
+        for name, value in metadata.items():
+            setattr(session, name, value)
+            setattr(cfg.profile, name, value)
         session.pending_images.clear()
-
-        if system_prompt is not None:
-            cfg.profile.system_prompt = system_prompt
-        if ctx_size is not None:
-            cfg.profile.ctx_size = ctx_size
-        if genmax is not None:
-            cfg.profile.genmax = genmax
+        session._last_user_add = None
 
         return CommandResult(
             message=f"Session restored from {resolved_path} ({len(messages)} messages loaded).",
