@@ -51,17 +51,17 @@ const exchange = JSON.stringify([{ role: 'user', content: 'question' }, { role: 
 test('welcome restores the server conversation', () => {
     const run = client();
     run(`handleServerMessage({type:'welcome', content:'Welcome', restored:true, session_id:'restored-id', history:${exchange}})`);
-    assert.equal(run('conversation.children.length'), 2);
-    assert.equal(run('conversation.children[0].textContent'), '> question');
+    assert.equal(run("history.children.filter(c => c.className === 'message user' || c.className === 'message assistant').length"), 2);
+    assert.equal(run('history.children[0].textContent'), '> question');
     assert.equal(run("history.children.some(c => c.textContent === 'Welcome Conversation restored.')"), true);
 });
 
 test('/undo replaces conversation, not the command display', () => {
     const run = client();
     run(`handleServerMessage({type:'history', content:${exchange}}); input.value='/undo'; sendMessage();`);
-    assert.equal(run('conversation.children.length'), 2);
+    assert.equal(run("history.children.filter(c => c.className === 'message user' || c.className === 'message assistant').length"), 2);
     run("handleServerMessage({type:'submission_done', content:[], accepted:true})");
-    assert.equal(run('conversation.children.length'), 0);
+    assert.equal(run("history.children.filter(c => c.className === 'message user' || c.className === 'message assistant').length"), 0);
     assert.equal(run('input.value'), '');
     assert.equal(run("history.children.some(c => c.textContent === '> /undo')"), true);
 });
@@ -81,8 +81,8 @@ test('/btw stays outside authoritative history when retry replaces the answer', 
         handleServerMessage({type:'stream_end'});
         handleServerMessage({type:'submission_done', accepted:true, content:[
             {role:'user', content:'question'}, {role:'assistant', content:'replacement'}]});`);
-    assert.equal(run('conversation.children.length'), 2);
-    assert.equal(run('conversation.children[1].innerHTML'), 'replacement');
+    assert.equal(run("history.children.filter(c => c.className === 'message user' || c.className === 'message assistant').length"), 2);
+    assert.equal(run("history.children.find(c => c.className === 'message assistant').innerHTML"), 'replacement');
     assert.equal(run("history.children.find(c => c.className === 'message assistant ephemeral').innerHTML"), 'aside answer');
     assert.equal(run("history.children.some(c => c.className === 'message assistant pending')"), false);
 });
@@ -99,10 +99,26 @@ test('busy, rejected, failed and disconnected sends retain text and attachments'
     run("sendMessage(); handleServerMessage({type:'submission_done', content:[], accepted:false});");
     assert.equal(run('input.value'), 'draft');
     assert.equal(run('pendingImages.length'), 1);
-    assert.equal(run('conversation.children.length'), 0);
+    assert.equal(run("history.children.filter(c => c.className === 'message user' || c.className === 'message assistant').length"), 0);
     run('ws.readyState=3; sendMessage();');
     assert.equal(run('input.value'), 'draft');
     assert.equal(run('pendingImages.length'), 1);
+});
+
+test('new stream follows earlier system messages in visible order', () => {
+    const run = client();
+    run(`handleServerMessage({type:'welcome', content:'Welcome', history:[]});
+        handleServerMessage({type:'system', content:'Earlier status'});
+        handleServerMessage({type:'history', content:[{role:'user', content:'Hello'}]});
+        handleServerMessage({type:'stream_start', ephemeral:false});`);
+    assert.deepEqual(Array.from(run('history.children.map(c => c.textContent || c.innerHTML)')),
+        ['Welcome', 'Earlier status', '> Hello', '<em>Thinking... 0.0s</em>']);
+    run(`handleServerMessage({type:'stream_chunk', content:'Reply'});
+        handleServerMessage({type:'stream_end'});
+        handleServerMessage({type:'submission_done', accepted:true, content:[
+            {role:'user', content:'Hello'}, {role:'assistant', content:'Reply'}]});`);
+    assert.deepEqual(Array.from(run('history.children.map(c => c.textContent || c.innerHTML)')),
+        ['Welcome', 'Earlier status', '> Hello', 'Reply']);
 });
 
 test('successful send clears only the submitted draft and attachments', () => {

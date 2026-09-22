@@ -310,6 +310,8 @@ async def _handle_message(
         session.revert_last_user_message()
         return False
 
+    if not cfg.ephemeral_api_key_missing:
+        await sender.send("history", session.messages)
     await _stream_to_ws(cfg, session, payload_messages, sender, streaming, record=True)
     return False
 

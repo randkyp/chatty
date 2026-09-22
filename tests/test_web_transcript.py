@@ -32,8 +32,12 @@ def test_authoritative_undo_btw_retry_and_failure(tmp_path, monkeypatch, respx_m
     monkeypatch.setattr(server, "stream_chat_async", stream)
     with TestClient(server.app).websocket_connect("/ws") as ws:
         ws.receive_json()
-        original, _ = submit(ws, "question")
+        original, events = submit(ws, "question")
         assert original["accepted"]
+        staged = next(i for i, event in enumerate(events) if event["type"] == "history")
+        stream_start = next(i for i, event in enumerate(events) if event["type"] == "stream_start")
+        assert staged < stream_start
+        assert events[staged]["content"] == [{"role": "user", "content": "question"}]
         aside, events = submit(ws, "/btw aside question")
         assert aside["content"] == original["content"]
         assert next(e for e in events if e["type"] == "stream_start")["ephemeral"]

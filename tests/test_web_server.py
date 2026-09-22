@@ -285,6 +285,7 @@ def test_stop_closes_silent_stream_and_allows_next_request(client, respx_mock, p
     with client.websocket_connect("/ws") as ws:
         ws.receive_json()
         ws.send_json({"type": "message", "text": "first"})
+        assert ws.receive_json()["type"] == "history"
         assert ws.receive_json()["type"] == "stream_start"
         if partial:
             assert ws.receive_json()["content"] == "partial"
@@ -302,6 +303,7 @@ def test_stop_closes_silent_stream_and_allows_next_request(client, respx_mock, p
 
         route.respond(200, text='data: {"choices": [{"delta": {"content": "next"}}]}\n\ndata: [DONE]\n')
         ws.send_json({"type": "message", "text": "second"})
+        assert ws.receive_json()["type"] == "history"
         assert ws.receive_json()["type"] == "stream_start"
         assert ws.receive_json()["content"] == "next"
         assert ws.receive_json()["type"] == "stream_end"
@@ -332,6 +334,7 @@ def test_disconnect_closes_silent_stream(client, respx_mock):
     with client.websocket_connect("/ws") as ws:
         ws.receive_json()
         ws.send_json({"type": "message", "text": "first"})
+        assert ws.receive_json()["type"] == "history"
         assert ws.receive_json()["type"] == "stream_start"
         assert reading.wait(3)
     assert closed.wait(3)

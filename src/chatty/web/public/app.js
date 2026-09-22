@@ -5,8 +5,8 @@
 // paste/drop, persisted theme + input history.
 
 const history = document.getElementById('chat-history');
-const conversation = document.createElement('div');
-history.appendChild(conversation);
+let renderedMessages = [];
+let renderedMessageDivs = [];
 let pendingSubmission = null;
 
 const input = document.getElementById('user-input');
@@ -95,9 +95,13 @@ function appendSystemMessage(text, type = 'system') {
 }
 
 function renderHistory(messages) {
-    conversation.innerHTML = '';
-    for (const msg of messages) {
-        if (msg.role !== 'user' && msg.role !== 'assistant') continue;
+    const visible = messages.filter(msg => msg.role === 'user' || msg.role === 'assistant');
+    const encoded = visible.map(msg => JSON.stringify(msg));
+    // Leave unchanged turns in place so system and command rows keep their order.
+    let prefix = 0;
+    while (prefix < encoded.length && encoded[prefix] === renderedMessages[prefix]) prefix++;
+    for (const div of renderedMessageDivs.splice(prefix)) div.remove();
+    for (const msg of visible.slice(prefix)) {
         const div = document.createElement('div');
         div.className = `message ${msg.role}`;
         const parts = typeof msg.content === 'string'
@@ -114,8 +118,10 @@ function renderHistory(messages) {
                 div.appendChild(image);
             }
         }
-        conversation.appendChild(div);
+        history.appendChild(div);
+        renderedMessageDivs.push(div);
     }
+    renderedMessages = encoded;
     scrollToBottom();
 }
 
