@@ -55,6 +55,8 @@ html[data-font="sans"] body {
     font-family: system-ui, -apple-system, BlinkMacSystemFont,
         "Segoe UI", Roboto, Helvetica, Arial, sans-serif,
         "Apple Color Emoji", "Segoe UI Emoji";
+    font-size: 17px;
+    line-height: 1.55;
 }
 
 html[data-font="sans"] .message.assistant pre,
@@ -69,6 +71,11 @@ html[data-font="sans"] .message.assistant code {
     padding: 40px 20px 50vh 20px;
     box-sizing: border-box;
     filter: grayscale(100%);
+}
+
+html[data-font="sans"] #paper-container {
+    max-width: 72ch;
+    padding: 48px 24px 50vh;
 }
 
 .resize-handle {
@@ -91,6 +98,10 @@ html[data-font="sans"] .message.assistant code {
 .message {
     margin-bottom: 1.5em;
     word-wrap: break-word;
+}
+
+html[data-font="sans"] .message {
+    margin-bottom: 1.25em;
 }
 
 .message.user {
@@ -162,6 +173,20 @@ html[data-font="sans"] .message.assistant code {
 }
 .message.assistant li {
     margin-bottom: 0.5em;
+}
+
+html[data-font="sans"] .message.assistant p,
+html[data-font="sans"] .message.assistant ul,
+html[data-font="sans"] .message.assistant ol {
+    margin-bottom: 0.75em;
+}
+
+html[data-font="sans"] .message.assistant li {
+    margin-bottom: 0.25em;
+}
+
+html[data-font="sans"] .message.assistant > :last-child {
+    margin-bottom: 0;
 }
 
 /* Tables with spacing only */
