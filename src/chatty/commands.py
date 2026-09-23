@@ -197,6 +197,7 @@ COMMANDS: list[str] = [
     "/edit",
     "/sessions",
     "/theme",
+    "/font",
 ]
 
 
@@ -290,6 +291,11 @@ def handle_command(
             if client_type == ClientType.TUI:
                 return CommandResult(message="Command disabled in TUI.")
             return CommandResult(message="Theme handled client-side.")
+
+        case "/font":
+            if client_type == ClientType.TUI:
+                return CommandResult(message="Command disabled in TUI.")
+            return CommandResult(message="Font handled client-side.")
 
         case _:
             return CommandResult(message=f"Unknown command: {cmd}")
@@ -920,6 +926,7 @@ def _cmd_help() -> CommandResult:
         ("/models [name]", "List available models or switch to a specific model."),
         ("/btw [msg]", "Send an ephemeral message without adding it to the context window."),
         ("/copy", "Copy the last assistant response to the clipboard."),
+        ("/font [sans|typewriter]", "Switch web UI font (web only, handled client-side)."),
     ]
 
     out = ["Available slash commands:"]

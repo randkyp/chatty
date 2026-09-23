@@ -219,8 +219,8 @@ async def _handle_message(
     # ── Slash commands ──────────────────────────────────────────────────────
     if is_command(text):
         first_word = text.split(None, 1)[0]
-        if first_word == "/theme":
-            await sender.send("theme", text)  # handled client-side
+        if first_word in ("/theme", "/font"):
+            await sender.send("theme" if first_word == "/theme" else "font", text)  # handled client-side
             return False
 
         await sender.send("command_start", first_word)

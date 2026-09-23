@@ -39,6 +39,7 @@ let streaming = false;
 const pendingImages = [];            // [{data_url, mime_type}]
 
 const THEME_KEY = 'chatty-theme';
+const FONT_KEY = 'chatty-font';
 const INPUT_KEY = 'chatty-input-history';
 
 // ── marked / KaTeX / DOMPurify setup ───────────────────────────────────────
@@ -80,6 +81,17 @@ function applyTheme(theme) {
     saveStore(THEME_KEY, theme || 'auto');
 }
 applyTheme(loadStore(THEME_KEY, 'auto'));
+
+// ── Font (persisted) ────────────────────────────────────────────────────────
+function applyFont(font) {
+    if (font === 'sans') {
+        document.documentElement.setAttribute('data-font', 'sans');
+    } else {
+        document.documentElement.removeAttribute('data-font');
+    }
+    saveStore(FONT_KEY, font === 'sans' ? 'sans' : 'typewriter');
+}
+applyFont(loadStore(FONT_KEY, 'typewriter'));
 
 // ── Rendering helpers ───────────────────────────────────────────────────────
 function scrollToBottom() {
@@ -405,6 +417,8 @@ function handleServerMessage(data) {
             break;
         case 'theme':
             break; // handled client-side on send
+        case 'font':
+            break; // handled client-side on send
         case 'api_key_prompt':
             showApiKeyPrompt();
             break;
@@ -531,13 +545,24 @@ function sendMessage() {
     }
     scrollToBottom();
 
-    // Theme switching is handled locally without a round-trip.
+    // Theme and font switching are handled locally without a round-trip.
     const parts = text.split(/\s+/);
     if (parts[0] === '/theme') {
         const theme = parts[1];
         applyTheme(theme);
         appendSystemMessage(theme === 'dark' || theme === 'light'
             ? `Theme set to ${theme}` : 'Theme set to auto (OS preference)');
+    } else if (parts[0] === '/font') {
+        const font = (parts[1] || '').toLowerCase();
+        if (font === 'sans') {
+            applyFont('sans');
+            appendSystemMessage('Font set to sans (system default)');
+        } else if (font === 'typewriter' || font === 'type' || font === 'mono') {
+            applyFont('typewriter');
+            appendSystemMessage('Font set to typewriter');
+        } else {
+            appendSystemMessage('Usage: /font [sans|typewriter]');
+        }
     } else if (ws && ws.readyState === WebSocket.OPEN) {
         const command = text.startsWith('/') && !text.startsWith('//');
         pendingSubmission = { text: input.value, images: command ? [] : pendingImages.slice() };

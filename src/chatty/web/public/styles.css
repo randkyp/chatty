@@ -51,6 +51,17 @@ body {
     text-wrap: pretty;
 }
 
+html[data-font="sans"] body {
+    font-family: system-ui, -apple-system, BlinkMacSystemFont,
+        "Segoe UI", Roboto, Helvetica, Arial, sans-serif,
+        "Apple Color Emoji", "Segoe UI Emoji";
+}
+
+html[data-font="sans"] .message.assistant pre,
+html[data-font="sans"] .message.assistant code {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
 #paper-container {
     position: relative;
     width: 100%;
