@@ -1,4 +1,5 @@
 import asyncio
+import hashlib
 import json
 import threading
 
@@ -40,6 +41,9 @@ def test_get_index(client):
     r = client.get("/")
     assert r.status_code == 200
     assert "Chatty" in r.text
+    assert r.headers["cache-control"] == "no-store"
+    script_hash = hashlib.sha256((server.PUBLIC_DIR / "app.js").read_bytes()).hexdigest()[:12]
+    assert f"/static/app.js?v={script_hash}" in r.text
 
 
 def test_build_session_configures_authenticated_token_counter(tmp_path):

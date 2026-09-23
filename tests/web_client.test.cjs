@@ -123,8 +123,10 @@ test('new stream follows earlier system messages in visible order', () => {
 
 test('successful send clears only the submitted draft and attachments', () => {
     const run = client();
-    run(`input.value='question'; pendingImages.push({data_url:'first'}); sendMessage();
-        input.value='next draft'; pendingImages.push({data_url:'second'});
+    run("input.value='question'; pendingImages.push({data_url:'first'}); sendMessage();");
+    assert.equal(run('input.value'), '');
+    assert.equal(run('pendingImages.length'), 0);
+    run(`input.value='next draft'; pendingImages.push({data_url:'second'});
         handleServerMessage({type:'submission_done', content:${exchange}, accepted:true});`);
     assert.equal(run('input.value'), 'next draft');
     assert.equal(run('pendingImages.length'), 1);

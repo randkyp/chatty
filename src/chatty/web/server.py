@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import copy
+import hashlib
 import json
 import re
 import secrets
@@ -43,7 +44,10 @@ app.mount("/static", StaticFiles(directory=PUBLIC_DIR), name="static")
 
 @app.get("/")
 async def get_index() -> HTMLResponse:
-    return HTMLResponse(content=(PUBLIC_DIR / "index.html").read_text(encoding="utf-8"))
+    script_hash = hashlib.sha256((PUBLIC_DIR / "app.js").read_bytes()).hexdigest()[:12]
+    html = (PUBLIC_DIR / "index.html").read_text(encoding="utf-8")
+    html = html.replace('/static/app.js"', f'/static/app.js?v={script_hash}"')
+    return HTMLResponse(content=html, headers={"Cache-Control": "no-store"})
 
 
 def _build_session(cfg: AppConfig) -> ChatSession:
