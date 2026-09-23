@@ -190,6 +190,27 @@ function setStreaming(on) {
     stopButton.hidden = !on;
 }
 
+function clearComposer() {
+    input.value = '';
+    input.style.height = 'auto';
+    if (pendingImages.length) {
+        pendingImages.length = 0;
+        renderImageChips();
+    }
+}
+
+function restoreSubmission(submission) {
+    if (!submission) return;
+    if (!input.value) {
+        input.value = submission.text;
+        input.style.height = 'auto';
+    }
+    if (submission.images.length) {
+        pendingImages.unshift(...submission.images);
+        renderImageChips();
+    }
+}
+
 function stopThinking() {
     if (thinkingInterval) {
         clearInterval(thinkingInterval);
@@ -431,6 +452,7 @@ function handleServerMessage(data) {
             renderHistory(data.content);
             break;
         case 'submission_rejected':
+            restoreSubmission(pendingSubmission);
             pendingSubmission = null;
             appendSystemMessage(data.content, 'warning');
             break;
@@ -438,16 +460,11 @@ function handleServerMessage(data) {
             // Preparation/provider exceptions may finish without stream_end.
             if (currentAssistantDiv) handleServerMessage({ type: 'stream_end' });
             renderHistory(data.content);
-            if (data.accepted && pendingSubmission) {
-                if (input.value === pendingSubmission.text) {
-                    input.value = '';
-                    input.style.height = 'auto';
-                }
-                for (const image of pendingSubmission.images) {
-                    const index = pendingImages.indexOf(image);
-                    if (index !== -1) pendingImages.splice(index, 1);
-                }
-                renderImageChips();
+            // The composer was already cleared on submit; only restore when the
+            // submission failed so a draft is never lost. Typing started during
+            // streaming is left untouched.
+            if (!data.accepted) {
+                restoreSubmission(pendingSubmission);
             }
             pendingSubmission = null;
             break;
@@ -568,6 +585,7 @@ function sendMessage() {
         pendingSubmission = { text: input.value, images: command ? [] : pendingImages.slice() };
         ws.send(JSON.stringify({ type: 'message', text, images: pendingSubmission.images }));
         if (command) appendSystemMessage(`> ${text}`);
+        clearComposer();
         return;
     } else {
         appendSystemMessage('Not connected to server.', 'error');
