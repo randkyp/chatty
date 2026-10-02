@@ -44,9 +44,10 @@ app.mount("/static", StaticFiles(directory=PUBLIC_DIR), name="static")
 
 @app.get("/")
 async def get_index() -> HTMLResponse:
-    script_hash = hashlib.sha256((PUBLIC_DIR / "app.js").read_bytes()).hexdigest()[:12]
     html = (PUBLIC_DIR / "index.html").read_text(encoding="utf-8")
-    html = html.replace('/static/app.js"', f'/static/app.js?v={script_hash}"')
+    for asset in ("app.js", "styles.css"):
+        digest = hashlib.sha256((PUBLIC_DIR / asset).read_bytes()).hexdigest()[:12]
+        html = html.replace(f'/static/{asset}"', f'/static/{asset}?v={digest}"')
     return HTMLResponse(content=html, headers={"Cache-Control": "no-store"})
 
 
@@ -224,7 +225,7 @@ async def _handle_message(
     if is_command(text):
         first_word = text.split(None, 1)[0]
         if first_word in ("/theme", "/font"):
-            await sender.send("theme" if first_word == "/theme" else "font", text)  # handled client-side
+            await sender.send(first_word[1:], text)  # handled client-side
             return False
 
         await sender.send("command_start", first_word)

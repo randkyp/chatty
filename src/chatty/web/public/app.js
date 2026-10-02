@@ -190,21 +190,25 @@ function setStreaming(on) {
     stopButton.hidden = !on;
 }
 
-function clearComposer() {
+// Clear the submitted draft. Attachments the submission did not carry (e.g.
+// images left attached while running a command) stay in the composer.
+function clearComposer(submission) {
     input.value = '';
     input.style.height = 'auto';
-    if (pendingImages.length) {
-        pendingImages.length = 0;
+    if (submission.images.length) {
+        for (const image of submission.images) {
+            const index = pendingImages.indexOf(image);
+            if (index !== -1) pendingImages.splice(index, 1);
+        }
         renderImageChips();
     }
 }
 
 function restoreSubmission(submission) {
     if (!submission) return;
-    if (!input.value) {
-        input.value = submission.text;
-        input.style.height = 'auto';
-    }
+    // Keep anything typed since the submission instead of overwriting it.
+    input.value = input.value ? `${submission.text}\n\n${input.value}` : submission.text;
+    input.style.height = 'auto';
     if (submission.images.length) {
         pendingImages.unshift(...submission.images);
         renderImageChips();
@@ -384,6 +388,7 @@ function connect() {
     ws.onclose = () => {
         setStreaming(false);
         stopThinking();
+        restoreSubmission(pendingSubmission);
         pendingSubmission = null;
         if (currentAssistantDiv) currentAssistantDiv.remove();
         currentAssistantDiv = null;
@@ -585,7 +590,7 @@ function sendMessage() {
         pendingSubmission = { text: input.value, images: command ? [] : pendingImages.slice() };
         ws.send(JSON.stringify({ type: 'message', text, images: pendingSubmission.images }));
         if (command) appendSystemMessage(`> ${text}`);
-        clearComposer();
+        clearComposer(pendingSubmission);
         return;
     } else {
         appendSystemMessage('Not connected to server.', 'error');

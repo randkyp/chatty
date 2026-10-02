@@ -132,3 +132,27 @@ test('successful send clears only the submitted draft and attachments', () => {
     assert.equal(run('pendingImages.length'), 1);
     assert.equal(run('pendingImages[0].data_url'), 'second');
 });
+
+test('disconnect mid-request restores the draft and attachments', () => {
+    const run = client();
+    run("input.value='question'; pendingImages.push({data_url:'first'}); sendMessage();");
+    assert.equal(run('input.value'), '');
+    run('ws.onclose();');
+    assert.equal(run('input.value'), 'question');
+    assert.equal(run('pendingImages.length'), 1);
+    assert.equal(run('pendingSubmission'), null);
+});
+
+test('command send keeps attached images in the composer', () => {
+    const run = client();
+    run("input.value='/models'; pendingImages.push({data_url:'first'}); sendMessage();");
+    assert.equal(run('input.value'), '');
+    assert.equal(run('pendingImages.length'), 1);
+});
+
+test('failed submission keeps text typed while it was running', () => {
+    const run = client();
+    run(`input.value='question'; sendMessage(); input.value='follow-up';
+        handleServerMessage({type:'submission_done', content:[], accepted:false});`);
+    assert.equal(run('input.value'), 'question\n\nfollow-up');
+});
