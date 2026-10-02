@@ -184,6 +184,7 @@ COMMANDS: list[str] = [
     "/apikey",
     "/samplers",
     "/sampelrs",
+    "/reasoning",
     "/save",
     "/load",
     "/image",
@@ -253,6 +254,9 @@ def handle_command(
 
         case "/samplers":
             return _cmd_samplers(arg, cfg, session)
+
+        case "/reasoning":
+            return _cmd_reasoning(arg, cfg)
 
         case "/image":
             return _cmd_image(arg, session, client_type)
@@ -464,6 +468,28 @@ def _cmd_samplers(arg: str, cfg: AppConfig, session: ChatSession) -> CommandResu
     value = _parse_value(sub_arg)
     _set_nested(cfg.profile.samplers, key, value)
     return CommandResult(message=f"Set sampler '{key}' = {value!r}.")
+
+
+# OpenAI-style top-level `reasoning_effort`, also accepted by OpenRouter and
+# vLLM (where "none" maps to enable_thinking=false). "off" aliases "none".
+REASONING_EFFORTS = ("none", "minimal", "low", "medium", "high", "xhigh")
+
+
+def _cmd_reasoning(arg: str, cfg: AppConfig) -> CommandResult:
+    """Convenience wrapper over the `reasoning_effort` sampler."""
+    level = arg.strip().lower()
+    if not level:
+        effort = cfg.profile.samplers.get("reasoning_effort")
+        return CommandResult(message=f"Reasoning effort: {effort or 'provider default'}")
+    if level in ("default", "clear", "rm"):
+        cfg.profile.samplers.pop("reasoning_effort", None)
+        return CommandResult(message="Reasoning effort reset to provider default.")
+    if level == "off":
+        level = "none"
+    if level not in REASONING_EFFORTS:
+        return CommandResult(message=f"Usage: /reasoning [off|{'|'.join(REASONING_EFFORTS[1:])}|default]")
+    cfg.profile.samplers["reasoning_effort"] = level
+    return CommandResult(message=f"Reasoning effort set to '{level}'.")
 
 
 def _cmd_save_session(arg: str, session: ChatSession, cfg: AppConfig) -> CommandResult:
@@ -919,6 +945,7 @@ def _cmd_help() -> CommandResult:
         ("/profile [name]", "Show active profile or switch connection profile."),
         ("/apikey [status|clear]", "Enter, inspect, or clear a process-memory API key."),
         ("/samplers [opts]", "Show, set, remove samplers, or save settings (/samplers save)."),
+        ("/reasoning [level]", "Show or set reasoning effort (off/minimal/low/medium/high/xhigh/default)."),
         ("/image [file]", "Attach an image from file path or clipboard."),
         ("/save [file]", "Save active chat session to session.json or custom file."),
         ("/load [file]", "Load chat session from session.json or custom file."),

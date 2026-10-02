@@ -241,6 +241,22 @@ def test_cmd_samplers(session, app_config):
     assert len(app_config.profile.samplers) == 0
 
 
+def test_cmd_reasoning(session, app_config):
+    assert "provider default" in handle_command("/reasoning", session, app_config).message
+
+    handle_command("/reasoning off", session, app_config)
+    assert app_config.profile.samplers["reasoning_effort"] == "none"
+
+    handle_command("/reasoning HIGH", session, app_config)
+    assert "high" in handle_command("/reasoning", session, app_config).message
+
+    assert "Usage" in handle_command("/reasoning max", session, app_config).message
+    assert app_config.profile.samplers["reasoning_effort"] == "high"
+
+    handle_command("/reasoning default", session, app_config)
+    assert "reasoning_effort" not in app_config.profile.samplers
+
+
 def test_cmd_save_and_load_session(session, app_config, tmp_path):
     session.system_prompt = "SaveSys"
     session.ctx_size = 5000

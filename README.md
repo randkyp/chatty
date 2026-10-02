@@ -77,6 +77,7 @@ browser may replace the profile's process-wide key.
 | `/profile [name]` | Show active profile or switch connection profile |
 | `/apikey [status\|clear]` | Enter, inspect, or clear an ephemeral profile key |
 | `/samplers ...` | Show/set/remove samplers, or `save` to config |
+| `/reasoning [level]` | Show/set `reasoning_effort` (`off`, `minimal`…`xhigh`, `default`) |
 | `/image [path]` | Attach an image from file path or clipboard |
 | `/save [file]` | Save active chat session |
 | `/load [file]` | Load a chat session |
