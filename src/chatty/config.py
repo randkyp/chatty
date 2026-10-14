@@ -71,6 +71,7 @@ base_url = "http://localhost:8080"
 # [profile.default.samplers]
 # temperature = 0.7
 # top_p = 0.9
+# latex = false  # web UI KaTeX math rendering (default off; absent = browser preference)
 """
 
 
@@ -90,6 +91,8 @@ class Profile:
     ctx_size: int | None = None
     genmax: int | None = None
     samplers: dict[str, Any] = field(default_factory=dict)
+    # Web UI KaTeX rendering. None = no opinion (browser preference, default off).
+    latex: bool | None = None
 
 
 @dataclass
@@ -183,6 +186,8 @@ def _load_profile(raw: dict[str, Any], name: str) -> Profile:
         )
     if api_key_mode == "ephemeral" and data.get("api_key") is not None:
         raise ProfileNotFoundError(f"Profile '{name}' cannot configure api_key when api_key_mode is 'ephemeral'.")
+    if "latex" in data and not isinstance(data["latex"], bool):
+        raise ProfileNotFoundError(f"Profile '{name}' has invalid latex {data['latex']!r}. Expected true or false.")
     return Profile(
         name=name,
         base_url=data["base_url"].rstrip("/"),
@@ -193,6 +198,7 @@ def _load_profile(raw: dict[str, Any], name: str) -> Profile:
         ctx_size=data.get("ctx_size"),
         genmax=data.get("genmax"),
         samplers=dict(data.get("samplers", {})),
+        latex=data.get("latex"),
     )
 
 
@@ -379,6 +385,11 @@ def save_profile(cfg: AppConfig) -> None:
         p_table["genmax"] = p.genmax
     elif "genmax" in p_table:
         del p_table["genmax"]
+
+    if p.latex is not None:
+        p_table["latex"] = p.latex
+    elif "latex" in p_table:
+        del p_table["latex"]
 
     # TOML has no null type, so drop None-valued samplers rather than emitting
     # invalid TOML (the old _serialise_value repr() fallback could do exactly that).

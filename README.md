@@ -85,6 +85,7 @@ browser may replace the profile's process-wide key.
 | `/models [name]` | List available models or switch to one |
 | `/btw [msg]` | Send an ephemeral message outside the context window |
 | `/theme [mode]` | Switch Web UI theme (`dark` / `light`) |
+| `/latex [on\|off\|clear]` | Toggle Web UI LaTeX math rendering (default off) |
 | `/copy` | Copy the last assistant response to clipboard |
 
 ## Development

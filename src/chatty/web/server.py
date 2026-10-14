@@ -286,6 +286,9 @@ async def _handle_message(
                 await sender.send("system", result.message)
             return False
 
+        if result.latex_updated:
+            await sender.send("latex", result.latex)
+
         if result.message:
             await sender.send("system", result.message)
         return False
@@ -342,6 +345,7 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
         session_id=state.session_id,
         restored=restored,
         history=session.messages,
+        latex=cfg.profile.latex,
     )
     if cfg.ephemeral_api_key_missing:
         await sender.send("api_key_prompt", "")

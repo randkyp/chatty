@@ -41,17 +41,50 @@ const pendingImages = [];            // [{data_url, mime_type}]
 const THEME_KEY = 'chatty-theme';
 const FONT_KEY = 'chatty-font';
 const INPUT_KEY = 'chatty-input-history';
+const LATEX_KEY = 'chatty-latex';
 
 // ── marked / KaTeX / DOMPurify setup ───────────────────────────────────────
-marked.setOptions({ breaks: true });
-marked.use(window.markedKatex({ throwOnError: false, nonStandard: true }));
+// Two marked instances so LaTeX can be toggled: plain preserves raw $...$
+// source, latex renders it via KaTeX. Default OFF.
+let latexEnabled = false;
+let markedPlain = null;
+let markedLatex = null;
+try {
+    if (marked && marked.Marked) {
+        markedPlain = new marked.Marked();
+        markedPlain.setOptions({ breaks: true });
+        markedLatex = new marked.Marked();
+        markedLatex.setOptions({ breaks: true });
+        if (window.markedKatex) {
+            try { markedLatex.use(window.markedKatex({ throwOnError: false, nonStandard: true })); } catch { /* no math */ }
+        }
+    } else {
+        marked.setOptions({ breaks: true });
+        marked.use(window.markedKatex({ throwOnError: false, nonStandard: true }));
+    }
+} catch {
+    try {
+        marked.setOptions({ breaks: true });
+        marked.use(window.markedKatex({ throwOnError: false, nonStandard: true }));
+    } catch { /* test harness with stubbed marked */ }
+}
 const purifyConfig = {
     USE_PROFILES: { html: true, mathMl: true },
     ADD_ATTR: ['style', 'target', 'class'],
 };
 
 function renderMarkdown(text) {
-    return DOMPurify.sanitize(marked.parse(text), purifyConfig);
+    let html;
+    try {
+        if (markedPlain && markedLatex) {
+            html = latexEnabled ? markedLatex.parse(text) : markedPlain.parse(text);
+        } else {
+            html = marked.parse(text);
+        }
+    } catch {
+        html = text;
+    }
+    return DOMPurify.sanitize(html, purifyConfig);
 }
 
 // ── Persistence ─────────────────────────────────────────────────────────────
@@ -93,6 +126,42 @@ function applyFont(font) {
 }
 applyFont(loadStore(FONT_KEY, 'typewriter'));
 
+// ── LaTeX (persisted fallback; profile key wins when present) ───────────────
+function resolveLatexEnabled(serverValue) {
+    if (typeof serverValue === 'boolean') return serverValue;
+    const stored = loadStore(LATEX_KEY, null);
+    if (typeof stored === 'boolean') return stored;
+    return false;
+}
+function initLatexFromServer(serverValue) {
+    latexEnabled = resolveLatexEnabled(serverValue);
+    if (typeof serverValue === 'boolean') saveStore(LATEX_KEY, serverValue);
+}
+function applyLatexServerValue(serverValue) {
+    if (typeof serverValue === 'boolean') {
+        latexEnabled = serverValue;
+        saveStore(LATEX_KEY, serverValue);
+    } else {
+        // Unset: fall back to the browser preference, default off.
+        // Keep the stored preference so clear only changes the source of truth.
+        latexEnabled = resolveLatexEnabled(null);
+    }
+    rerenderAllMessages();
+}
+let currentHistoryMessages = [];
+function rerenderAllMessages() {
+    for (const div of renderedMessageDivs.splice(0)) div.remove();
+    renderedMessages = [];
+    if (currentHistoryMessages.length) {
+        const cached = currentHistoryMessages;
+        currentHistoryMessages = [];
+        renderHistory(cached);
+    }
+    if (currentAssistantDiv && currentAssistantContent) {
+        currentAssistantDiv.innerHTML = renderMarkdown(currentAssistantContent);
+    }
+}
+
 // ── Rendering helpers ───────────────────────────────────────────────────────
 function scrollToBottom() {
     window.scrollTo({ top: document.body.scrollHeight, behavior: 'smooth' });
@@ -107,6 +176,7 @@ function appendSystemMessage(text, type = 'system') {
 }
 
 function renderHistory(messages) {
+    currentHistoryMessages = messages;
     const visible = messages.filter(msg => msg.role === 'user' || msg.role === 'assistant');
     const encoded = visible.map(msg => JSON.stringify(msg));
     // Leave unchanged turns in place so system and command rows keep their order.
@@ -416,6 +486,7 @@ function handleServerMessage(data) {
                 webSessionId = data.session_id;
                 try { sessionStorage.setItem(WEB_SESSION_KEY, webSessionId); } catch { /* unavailable */ }
             }
+            initLatexFromServer(data.latex);
             renderHistory(data.history || []);
             appendSystemMessage(data.restored ? `${data.content} Conversation restored.` : data.content);
             break;
@@ -445,6 +516,9 @@ function handleServerMessage(data) {
             break; // handled client-side on send
         case 'font':
             break; // handled client-side on send
+        case 'latex':
+            applyLatexServerValue(data.content);
+            break;
         case 'api_key_prompt':
             showApiKeyPrompt();
             break;

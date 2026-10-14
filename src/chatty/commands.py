@@ -69,6 +69,10 @@ class CommandResult:
     # Structured model picker choices (bare /models). None means no picker.
     model_choices: list[str] | None = None
     model_current: str | None = None
+    # Web UI LaTeX rendering update. latex_updated distinguishes
+    # "no change" from "unset to None".
+    latex_updated: bool = False
+    latex: bool | None = None
 
 
 def apply_model_choice(cfg: AppConfig, session: ChatSession, model_id: str) -> str:
@@ -199,6 +203,7 @@ COMMANDS: list[str] = [
     "/sessions",
     "/theme",
     "/font",
+    "/latex",
 ]
 
 
@@ -301,6 +306,9 @@ def handle_command(
                 return CommandResult(message="Command disabled in TUI.")
             return CommandResult(message="Font handled client-side.")
 
+        case "/latex":
+            return _cmd_latex(arg, cfg, client_type)
+
         case _:
             return CommandResult(message=f"Unknown command: {cmd}")
 
@@ -375,10 +383,48 @@ def _cmd_profile(arg: str, session: ChatSession, cfg: AppConfig) -> CommandResul
     new_profile = cfg.profile
     sync_profile_settings(session, cfg)
     session.system_prompt = new_profile.system_prompt
+    if new_profile.latex is True:
+        latex_note = " LaTeX rendering on."
+    elif new_profile.latex is False:
+        latex_note = " LaTeX rendering off."
+    else:
+        latex_note = " LaTeX rendering unset (browser preference, default off)."
     return CommandResult(
-        message=f"Switched to profile '{arg}'.",
+        message=f"Switched to profile '{arg}'.{latex_note}",
         request_api_key=cfg.ephemeral_api_key_missing,
+        latex_updated=True,
+        latex=new_profile.latex,
     )
+
+
+def _latex_status_line(value: bool | None) -> str:
+    if value is True:
+        return "LaTeX rendering on — rendering $...$ with KaTeX."
+    if value is False:
+        return "LaTeX rendering off — showing raw $...$ source."
+    return "LaTeX rendering unset — using browser preference (default off)."
+
+
+def _cmd_latex(arg: str, cfg: AppConfig, client_type: ClientType) -> CommandResult:
+    """Server-owned toggle for web UI KaTeX rendering (disabled in TUI)."""
+    if client_type == ClientType.TUI:
+        return CommandResult(message="Command disabled in TUI.")
+    level = arg.strip().lower()
+    if not level:
+        # Bare toggle: unset counts as off (the hard default), so first toggle turns on.
+        new_value = True if cfg.profile.latex is None else not cfg.profile.latex
+        cfg.profile.latex = new_value
+        return CommandResult(message=_latex_status_line(new_value), latex_updated=True, latex=new_value)
+    if level in ("on", "true", "1", "enable", "enabled"):
+        cfg.profile.latex = True
+        return CommandResult(message=_latex_status_line(True), latex_updated=True, latex=True)
+    if level in ("off", "false", "0", "disable", "disabled"):
+        cfg.profile.latex = False
+        return CommandResult(message=_latex_status_line(False), latex_updated=True, latex=False)
+    if level in ("clear", "default", "unset", "none"):
+        cfg.profile.latex = None
+        return CommandResult(message=_latex_status_line(None), latex_updated=True, latex=None)
+    return CommandResult(message="Usage: /latex [on|off|clear]")
 
 
 def sync_profile_settings(session: ChatSession, cfg: AppConfig) -> None:
@@ -953,6 +999,7 @@ def _cmd_help() -> CommandResult:
         ("/models [name]", "List available models or switch to a specific model."),
         ("/btw [msg]", "Send an ephemeral message without adding it to the context window."),
         ("/copy", "Copy the last assistant response to the clipboard."),
+        ("/latex [on|off|clear]", "Toggle web UI LaTeX math rendering (web only, default off)."),
         ("/font [sans|typewriter]", "Switch web UI font (web only, handled client-side)."),
     ]
 
