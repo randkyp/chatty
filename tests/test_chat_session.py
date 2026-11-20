@@ -332,6 +332,93 @@ def test_stage_user_message_restores_state_when_preparation_fails():
 # --- Context-clipping edge cases ---
 
 
+class _FlatCounter:
+    """Every message costs the same, so clipping arithmetic is exact."""
+
+    def __init__(self, per_message=10):
+        self.per_message = per_message
+
+    def count(self, text):  # pragma: no cover - unused by clipping
+        return 0
+
+    def count_message(self, msg):
+        return self.per_message
+
+    def count_messages(self, messages):
+        return self.per_message * len(messages) + 2
+
+
+def _alternating(count):
+    return [{"role": "user" if i % 2 == 0 else "assistant", "content": f"m{i}"} for i in range(count)]
+
+
+def test_clipping_frees_a_chunk_of_the_window():
+    # 1000 ctx, no genmax -> 900 budget. One trim frees 25% of the window,
+    # rather than the single turn that barely fitting would drop.
+    session = ChatSession(ctx_size=1000, genmax=0)
+    session.set_counter(_FlatCounter())
+    session.messages = _alternating(70)
+
+    payload = session.build_payload_messages()
+
+    assert payload[0]["content"] == "m6"
+    assert len(payload) == 64
+    assert payload[0]["role"] == "user"
+
+
+def test_clipping_starts_the_window_on_a_user_turn():
+    session = ChatSession(ctx_size=1000, genmax=0)
+    session.set_counter(_FlatCounter())
+    session.messages = _alternating(71)
+
+    # The token target lands on an assistant message; the window moves past it
+    # instead of keeping a reply whose question was dropped.
+    payload = session.build_payload_messages()
+
+    assert payload[0]["content"] == "m8"
+    assert payload[0]["role"] == "user"
+
+
+def test_retained_window_is_stable_between_trims():
+    session = ChatSession(ctx_size=1000, genmax=0)
+    session.set_counter(_FlatCounter())
+    session.messages = _alternating(70)
+    first = session.build_payload_messages()
+
+    # Two more turns fit the freed headroom, so the prefix must not move.
+    session.messages += [
+        {"role": "user", "content": "next"},
+        {"role": "assistant", "content": "reply"},
+    ]
+    second = session.build_payload_messages()
+    assert second[0] == first[0]
+    assert len(second) == len(first) + 2
+
+    # Overflowing again jumps the window by a whole chunk.
+    session.messages += [
+        {"role": "user", "content": "a"},
+        {"role": "assistant", "content": "b"},
+        {"role": "user", "content": "c"},
+        {"role": "assistant", "content": "d"},
+    ]
+    third = session.build_payload_messages()
+    assert third[0]["content"] == "m12"
+
+
+def test_rewound_history_forgets_the_clip_window():
+    session = ChatSession(ctx_size=1000, genmax=0)
+    session.set_counter(_FlatCounter())
+    session.messages = _alternating(70)
+    session.build_payload_messages()
+    assert session._clip_start == 6
+
+    session.undo()
+
+    # The remembered window described a longer history; it no longer applies.
+    payload = session.build_payload_messages()
+    assert payload[0]["content"] == "m0"
+
+
 def test_build_payload_drops_leading_assistant():
     session = ChatSession(system_prompt="sys")
     session.set_counter(_FakeCounter())

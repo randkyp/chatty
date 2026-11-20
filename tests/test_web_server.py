@@ -137,6 +137,35 @@ def test_websocket_reconnect_restores_history_and_settings(client, respx_mock):
     ]
 
 
+def test_websocket_replays_reasoning_on_the_next_request(client, respx_mock):
+    respx_mock.post("http://up/tokenize").respond(404)
+    first = (
+        'data: {"choices": [{"delta": {"reasoning_content": "why"}}]}\n\n'
+        'data: {"choices": [{"delta": {"content": "answer"}}]}\n\n'
+        "data: [DONE]\n"
+    )
+    second = 'data: {"choices": [{"delta": {"content": "again"}}]}\n\ndata: [DONE]\n'
+    respx_mock.post("http://up/v1/chat/completions").mock(
+        side_effect=[
+            httpx.Response(200, text=first, headers={"content-type": "text/event-stream"}),
+            httpx.Response(200, text=second, headers={"content-type": "text/event-stream"}),
+        ]
+    )
+
+    url = "/ws?session_id=reasoning-session-1&client_id=reasoning-client-1"
+    with client.websocket_connect(url) as ws:
+        ws.receive_json()  # welcome
+        for text in ("first", "second"):
+            ws.send_json({"type": "message", "text": text})
+            while ws.receive_json()["type"] != "submission_done":
+                pass
+
+    payload = json.loads(
+        [call.request for call in respx_mock.calls if call.request.url.path == "/v1/chat/completions"][-1].content
+    )
+    assert payload["messages"][1] == {"role": "assistant", "content": "answer", "reasoning_content": "why"}
+
+
 def test_simultaneous_clients_cannot_share_conversation(client, respx_mock):
     _mock_upstream(respx_mock, 'data: {"choices": [{"delta": {"content": "answer"}}]}\n\ndata: [DONE]\n')
     session_id = "shared-session-123456"

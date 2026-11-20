@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import AsyncGenerator, Generator
+from dataclasses import dataclass, field
 from importlib.metadata import PackageNotFoundError, version
 from typing import Any, Literal
 
@@ -164,8 +165,73 @@ def _stream_payload(
 
 StreamEvent = tuple[Literal["delta", "reasoning", "error", "usage", "timings"], str]
 
+# Message keys a provider may expect back for reasoning continuity. Anything
+# else attached to a stored turn stays out of the request.
+REASONING_FIELDS = ("reasoning_content", "reasoning", "reasoning_details")
 
-def _stream_events(data: str) -> Generator[StreamEvent, None, None]:
+
+@dataclass
+class ReasoningAccumulator:
+    """Collect reasoning from streamed deltas so it can be replayed verbatim.
+
+    Providers disagree on both the field name and the shape: most send a plain
+    ``reasoning_content`` string, OpenRouter adds structured ``reasoning_details``
+    entries (encrypted or signed) that arrive in fragments keyed by ``index``.
+    Everything is kept exactly as received and never interpreted, because
+    signatures and encrypted blobs are only valid unmodified.
+    """
+
+    text: str = ""
+    text_key: str = "reasoning_content"
+    details: list[dict[str, Any]] = field(default_factory=list)
+    _details_by_index: dict[int, dict[str, Any]] = field(default_factory=dict, repr=False)
+
+    def feed(self, delta: dict[str, Any]) -> None:
+        """Absorb the reasoning fields of one streamed delta."""
+        for key in ("reasoning_content", "reasoning"):
+            value = delta.get(key)
+            if isinstance(value, str) and value:
+                if not self.text:
+                    self.text_key = key
+                self.text += value
+                break
+        details = delta.get("reasoning_details")
+        if isinstance(details, list):
+            for detail in details:
+                if isinstance(detail, dict):
+                    self._merge_detail(detail)
+
+    def _merge_detail(self, detail: dict[str, Any]) -> None:
+        index = detail.get("index")
+        if isinstance(index, bool) or not isinstance(index, int):
+            index = None
+        existing = self._details_by_index.get(index) if index is not None else None
+        if existing is None:
+            entry = dict(detail)
+            if index is not None:
+                self._details_by_index[index] = entry
+            self.details.append(entry)
+            return
+        for key, value in detail.items():
+            if key == "index":
+                continue
+            if key in ("text", "summary", "data") and isinstance(value, str):
+                # These arrive in pieces; concatenate this turn's fragment.
+                existing[key] = str(existing.get(key, "")) + value
+            elif value is not None:
+                existing[key] = value
+
+    def as_fields(self) -> dict[str, Any]:
+        """Return the assistant message fields to replay, or {} if none arrived."""
+        fields: dict[str, Any] = {}
+        if self.text:
+            fields[self.text_key] = self.text
+        if self.details:
+            fields["reasoning_details"] = self.details
+        return fields
+
+
+def _stream_events(data: str, reasoning: ReasoningAccumulator | None = None) -> Generator[StreamEvent, None, None]:
     try:
         chunk = json.loads(data)
     except json.JSONDecodeError:
@@ -183,9 +249,11 @@ def _stream_events(data: str) -> Generator[StreamEvent, None, None]:
     choices = chunk.get("choices", [])
     if choices:
         delta = choices[0].get("delta", {})
-        reasoning = delta.get("reasoning_content") or delta.get("reasoning")
-        if isinstance(reasoning, str) and reasoning:
-            yield "reasoning", reasoning
+        if reasoning is not None:
+            reasoning.feed(delta)
+        reasoning_text = delta.get("reasoning_content") or delta.get("reasoning")
+        if isinstance(reasoning_text, str) and reasoning_text:
+            yield "reasoning", reasoning_text
         content = delta.get("content", "")
         if content:
             yield "delta", content
@@ -201,6 +269,7 @@ def stream_chat(
     debug: bool = False,
     opencode_session: str | None = None,
     timings: RequestTimings | None = None,
+    reasoning: ReasoningAccumulator | None = None,
 ) -> Generator[StreamEvent, None, None]:
     """Stream a chat completion. Yields structured events.
 
@@ -210,7 +279,8 @@ def stream_chat(
     final ("usage", json) event carrying token counts.
 
     *timings*, when given, is stamped as the request progresses so the caller
-    can report a per-stage breakdown afterwards.
+    can report a per-stage breakdown afterwards. *reasoning*, when given, is
+    filled with the raw reasoning fields for replay on later turns.
     """
     payload = _stream_payload(model, messages, samplers, genmax, debug)
 
@@ -243,7 +313,7 @@ def stream_chat(
                 data = line[6:]
                 if data.strip() == "[DONE]":
                     return
-                for event in _stream_events(data):
+                for event in _stream_events(data, reasoning):
                     if timings is not None:
                         timings.observe(*event)
                     yield event
@@ -267,6 +337,7 @@ async def stream_chat_async(
     debug: bool = False,
     opencode_session: str | None = None,
     timings: RequestTimings | None = None,
+    reasoning: ReasoningAccumulator | None = None,
 ) -> AsyncGenerator[StreamEvent, None]:
     """Stream web completions with cancellable reads and task-owned connections."""
     payload = _stream_payload(model, messages, samplers, genmax, debug)
@@ -294,7 +365,7 @@ async def stream_chat_async(
                     data = line[6:]
                     if data.strip() == "[DONE]":
                         return
-                    for event in _stream_events(data):
+                    for event in _stream_events(data, reasoning):
                         if timings is not None:
                             timings.observe(*event)
                         yield event

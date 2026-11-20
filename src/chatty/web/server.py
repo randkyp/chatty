@@ -23,8 +23,8 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 
-from chatty.api import stream_chat_async
-from chatty.chat_session import ChatSession
+from chatty.api import ReasoningAccumulator, stream_chat_async
+from chatty.chat_session import ChatSession, new_session_id
 from chatty.commands import (
     ClientType,
     handle_command,
@@ -175,6 +175,7 @@ async def _stream_to_ws(
     *,
     record: bool,
     timings: RequestTimings | None = None,
+    conversation_id: str | None = None,
 ) -> None:
     record_timings = timings if timings is not None else RequestTimings()
     if cfg.ephemeral_api_key_missing:
@@ -188,6 +189,7 @@ async def _stream_to_ws(
 
     await sender.send("stream_start", "", ephemeral=not record)
     collected: list[str] = []
+    reasoning = ReasoningAccumulator()
     interrupted = False
     streaming.set()
     try:
@@ -199,8 +201,9 @@ async def _stream_to_ws(
             samplers=cfg.profile.samplers,
             genmax=session.genmax,
             debug=cfg.debug,
-            opencode_session=cfg.request_session_id(session.conversation_id),
+            opencode_session=cfg.request_session_id(conversation_id or session.conversation_id),
             timings=record_timings,
+            reasoning=reasoning,
         ):
             if event_type == "error":
                 record_timings.error = content
@@ -222,7 +225,7 @@ async def _stream_to_ws(
     full_response = "".join(collected)
     if record:
         if full_response:
-            session.add_assistant_message(full_response)
+            session.add_assistant_message(full_response, reasoning=reasoning.as_fields() or None)
         else:
             session.revert_last_user_message()
     await sender.send("stream_end", "")
@@ -269,11 +272,22 @@ async def _handle_message(
             or result.remove_last_assistant
             or result.load_messages is not None
         ):
-            await sender.send("history", session.messages)
+            await sender.send("history", session.display_messages())
 
         if result.ephemeral_prompt:
             messages = [{"role": "user", "content": result.ephemeral_prompt}]
-            await _stream_to_ws(cfg, session, messages, sender, streaming, record=False, timings=RequestTimings())
+            # Its own conversation: a new id keeps the unrelated prompt out of
+            # the live conversation's backend cache slot.
+            await _stream_to_ws(
+                cfg,
+                session,
+                messages,
+                sender,
+                streaming,
+                record=False,
+                timings=RequestTimings(),
+                conversation_id=new_session_id(),
+            )
             return False
 
         if result.resend_user:
@@ -337,7 +351,7 @@ async def _handle_message(
         return False
 
     if not cfg.ephemeral_api_key_missing:
-        await sender.send("history", session.messages)
+        await sender.send("history", session.display_messages())
     await _stream_to_ws(cfg, session, payload_messages, sender, streaming, record=True, timings=timings)
     return False
 
@@ -362,7 +376,7 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
         _welcome_text(cfg, session),
         session_id=state.session_id,
         restored=restored,
-        history=session.messages,
+        history=session.display_messages(),
         latex=cfg.profile.latex,
     )
     if cfg.ephemeral_api_key_missing:
@@ -455,7 +469,7 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                 finally:
                     # ponytail: full snapshots cost O(history size), including images;
                     # use stable turn IDs and deltas if long sessions make this costly.
-                    await sender.send("submission_done", session.messages, accepted=accepted)
+                    await sender.send("submission_done", session.display_messages(), accepted=accepted)
 
             current_task = asyncio.create_task(_runner())
     except WebSocketDisconnect:

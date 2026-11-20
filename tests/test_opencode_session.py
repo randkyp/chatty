@@ -248,6 +248,57 @@ def test_cli_stream_passes_the_conversation_id(monkeypatch, tmp_path):
     assert captured["opencode_session"] is None
 
 
+def test_cli_ephemeral_prompt_uses_a_private_conversation_id(monkeypatch, tmp_path):
+    from chatty import main
+    from chatty.commands import CommandResult
+
+    captured = {}
+
+    def fake_stream(**kwargs):
+        captured.update(kwargs)
+        return iter(())
+
+    monkeypatch.setattr(main, "stream_chat", fake_stream)
+    cfg = AppConfig(
+        config_path=tmp_path / "c.toml",
+        profile=Profile(name="p", base_url="http://up", opencode_session=True),
+        raw_output=True,
+    )
+    session = ChatSession()
+
+    main._handle_command_result(CommandResult(ephemeral_prompt="what is 2+2?"), session, cfg)
+
+    # The unrelated prompt must not be routed into the live conversation's
+    # cache slot, where it could evict the warm prefix.
+    assert captured["opencode_session"]
+    assert captured["opencode_session"] != session.conversation_id
+
+
+def test_web_ephemeral_prompt_uses_a_private_conversation_id(monkeypatch, app_config):
+    import asyncio
+
+    captured = {}
+
+    async def fake_stream(**kwargs):
+        captured.update(kwargs)
+        if False:  # pragma: no cover - make this an async generator
+            yield
+
+    monkeypatch.setattr(server, "stream_chat_async", fake_stream)
+
+    class _FakeWS:
+        async def send_text(self, text):
+            pass
+
+    session = ChatSession(system_prompt="Initial Sys", ctx_size=4096, genmax=256)
+    sender = server._Sender(_FakeWS())
+
+    asyncio.run(server._handle_message("/btw hi", None, session, app_config, sender, asyncio.Event()))
+
+    assert captured["opencode_session"]
+    assert captured["opencode_session"] != session.conversation_id
+
+
 # ── Command paths ──────────────────────────────────────────────────────────
 
 

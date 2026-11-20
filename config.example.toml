@@ -14,6 +14,7 @@ base_url = "http://localhost:8080"
 # genmax = 0
 # latex = false  # web UI KaTeX math rendering (default off; absent = browser preference)
 # opencode_session = true  # Send x-opencode-session + a chatty User-Agent (OpenCode Go).
+# preserve_reasoning = false  # Stop replaying prior reasoning blocks (default: replay them).
 
 # [profile.default.samplers]
 # temperature = 0.7

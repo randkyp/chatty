@@ -18,8 +18,8 @@ from rich.live import Live
 from rich.markdown import Markdown
 from rich.text import Text
 
-from chatty.api import close_clients, stream_chat
-from chatty.chat_session import ChatSession
+from chatty.api import ReasoningAccumulator, close_clients, stream_chat
+from chatty.chat_session import ChatSession, new_session_id
 from chatty.clipboard import ClipboardError, copy_text
 from chatty.commands import (
     CommandResult,
@@ -64,13 +64,15 @@ def stream_and_render(
     label: str = "Assistant",
     conversation_id: str | None = None,
     timings: RequestTimings | None = None,
+    reasoning: ReasoningAccumulator | None = None,
 ) -> tuple[str, bool, dict | None]:
     """Stream a completion and render it to the terminal.
 
     Handles the Thinking spinner, the transient thinking line, the rolling tail
     preview (or raw output), Ctrl+C interruption, and final Markdown rendering.
     Returns (full_response, interrupted, usage) where *usage* is the
-    server-reported token usage dict if available.
+    server-reported token usage dict if available. *reasoning*, when given, is
+    filled with the raw reasoning fields for replay on later turns.
     """
     if cfg.ephemeral_api_key_missing:
         print_error(EPHEMERAL_KEY_REQUIRED)
@@ -86,6 +88,7 @@ def stream_and_render(
         debug=cfg.debug,
         opencode_session=cfg.request_session_id(conversation_id),
         timings=timings,
+        reasoning=reasoning,
     )
 
     collected: list[str] = []
@@ -246,7 +249,10 @@ def _handle_command_result(result: CommandResult, session: ChatSession, cfg: App
             messages,
             session.genmax,
             label="Assistant (ephemeral)",
-            conversation_id=session.conversation_id,
+            # An ephemeral exchange is its own conversation. Reusing the live
+            # id would route it into that conversation's backend cache slot,
+            # where the unrelated prompt can evict the warm prefix.
+            conversation_id=new_session_id(),
             timings=record,
         )
         record.finish(usage=usage, interrupted=interrupted)
@@ -335,13 +341,19 @@ def _stream_record_report(
 ) -> None:
     """Stream a response for *payload_messages*, record it, and report tokens."""
     record = timings if timings is not None else RequestTimings()
+    reasoning = ReasoningAccumulator()
     full_response, interrupted, usage = stream_and_render(
-        cfg, payload_messages, session.genmax, conversation_id=session.conversation_id, timings=record
+        cfg,
+        payload_messages,
+        session.genmax,
+        conversation_id=session.conversation_id,
+        timings=record,
+        reasoning=reasoning,
     )
     record.finish(usage=usage, interrupted=interrupted)
 
     if full_response:
-        session.add_assistant_message(full_response)
+        session.add_assistant_message(full_response, reasoning=reasoning.as_fields() or None)
     else:
         # Nothing generated (failed/interrupted before any text): drop the user
         # message so it isn't duplicated on retry. revert is merge-aware.

@@ -98,6 +98,10 @@ class Profile:
     # Send OpenCode's session header and identify as chatty in the User-Agent.
     # Opt-in: other OpenAI-compatible endpoints get the plain client behavior.
     opencode_session: bool = False
+    # Replay captured reasoning fields (with signatures/encrypted parts) when
+    # sending history back. On by default: templates that do not want them drop
+    # them, and providers that require them reject turns without them.
+    preserve_reasoning: bool = True
 
 
 @dataclass
@@ -211,6 +215,10 @@ def _load_profile(raw: dict[str, Any], name: str) -> Profile:
         raise ProfileNotFoundError(
             f"Profile '{name}' has invalid opencode_session {data['opencode_session']!r}. Expected true or false."
         )
+    if "preserve_reasoning" in data and not isinstance(data["preserve_reasoning"], bool):
+        raise ProfileNotFoundError(
+            f"Profile '{name}' has invalid preserve_reasoning {data['preserve_reasoning']!r}. Expected true or false."
+        )
     return Profile(
         name=name,
         base_url=data["base_url"].rstrip("/"),
@@ -223,6 +231,7 @@ def _load_profile(raw: dict[str, Any], name: str) -> Profile:
         samplers=dict(data.get("samplers", {})),
         latex=data.get("latex"),
         opencode_session=data.get("opencode_session", False),
+        preserve_reasoning=data.get("preserve_reasoning", True),
     )
 
 
@@ -419,6 +428,12 @@ def save_profile(cfg: AppConfig) -> None:
         p_table["opencode_session"] = True
     elif "opencode_session" in p_table:
         del p_table["opencode_session"]
+
+    # Default is on, so only an opt-out needs to be written.
+    if not p.preserve_reasoning:
+        p_table["preserve_reasoning"] = False
+    elif "preserve_reasoning" in p_table:
+        del p_table["preserve_reasoning"]
 
     # TOML has no null type, so drop None-valued samplers rather than emitting
     # invalid TOML (the old _serialise_value repr() fallback could do exactly that).

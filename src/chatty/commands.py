@@ -444,6 +444,12 @@ def sync_profile_settings(session: ChatSession, cfg: AppConfig) -> None:
     """Install resolved limits and credentials without changing conversation history."""
     session.ctx_size = cfg.ctx_size
     session.genmax = cfg.genmax
+    preserve = cfg.profile.preserve_reasoning
+    if preserve != session.preserve_reasoning:
+        session.preserve_reasoning = preserve
+        # Replayed reasoning is part of every earlier assistant turn, so the
+        # provider's cached prefix no longer describes the payload.
+        session.start_new_conversation()
     sync_token_counter(session, cfg)
 
 

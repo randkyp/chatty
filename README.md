@@ -72,6 +72,23 @@ the header can be rejected with `400 MissingSessionID`. The id is regenerated wh
 (`/clear`, `/load`) or when the system prompt changes, because the cached prefix no longer applies. It is never written
 to config or session files.
 
+### Reasoning Preservation
+
+Reasoning models return more than the answer: thinking text, signed blocks, or encrypted blobs. Chatty keeps whatever
+the provider sent with the assistant turn and replays it on later requests, which is what models like DeepSeek V4,
+Kimi K2, GLM with preserved thinking, and Claude extended thinking expect for multi-turn continuity. Providers whose
+chat template does not want prior reasoning simply drop the extra fields, so replaying them costs nothing there.
+
+```toml
+[profile.local]
+# Set to false to stop replaying reasoning (smaller prompts on models that
+# expose long traces and do not need them back).
+preserve_reasoning = false
+```
+
+Replayed reasoning counts toward the context budget. Opaque signatures and encrypted payloads are excluded from the
+count because their billed size is not knowable from the wire. The flag is per profile and defaults to on.
+
 ### Input Features
 
 - **Send:** `Enter` sends, `Shift+Enter` adds a new line (in CLI use `Esc → Enter`). Flip this with `-e/--multiline`.

@@ -3,7 +3,8 @@ Chat session: message history, token counting, and context clipping.
 
 Token counting tries the server's /tokenize endpoint first (llama.cpp style),
 then falls back to tiktoken's cl100k_base.  Context clipping removes the
-oldest user/assistant pairs until the history fits within ctx_size - genmax.
+oldest user/assistant turns until the history fits within ctx_size - genmax,
+and cuts well below that limit so the prefix stays stable for a while.
 """
 
 from __future__ import annotations
@@ -17,7 +18,7 @@ from typing import Any
 import httpx
 import tiktoken
 
-from chatty.api import _auth_headers, get_client
+from chatty.api import REASONING_FIELDS, _auth_headers, get_client
 from chatty.timing import RequestTimings
 
 # ── Conversation identity ──────────────────────────────────────────────────
@@ -30,6 +31,12 @@ def new_session_id() -> str:
     conversations; OpenCode does not parse it.
     """
     return "ses_" + secrets.token_urlsafe(24)
+
+
+# Fraction of the context window freed at once when clipping. Trimming to a low
+# watermark instead of exactly to the budget keeps the leading messages stable
+# across several turns, which is what provider-side prefix (KV) caching needs.
+CONTEXT_TRIM_FRACTION = 0.25
 
 
 # ── Token counting ─────────────────────────────────────────────────────────
@@ -128,24 +135,39 @@ class TokenCounter:
         while len(self._cache) > 1024:
             self._cache.popitem(last=False)
 
-    def count_messages(self, messages: list[dict[str, Any]]) -> int:
-        """Approximate token count for a list of chat messages.
+    def count_message(self, msg: dict[str, Any]) -> int:
+        """Approximate token count for one chat message.
 
-        Uses ~4 overhead tokens per message (role, separators) following
-        the OpenAI convention.
+        Uses ~4 overhead tokens for role and separators, following the OpenAI
+        convention, plus a buffer for image parts. Replayed reasoning counts as
+        prompt content; opaque signatures and encrypted blobs are ignored
+        because the provider's billing for them is unknowable from the wire.
         """
-        total = 0
-        for msg in messages:
-            total += 4  # role + formatting overhead
-            content = msg.get("content", "")
-            if isinstance(content, str):
-                total += self.count(content)
-            elif isinstance(content, list):
-                for part in content:
-                    if part.get("type") == "text":
-                        total += self.count(part.get("text", ""))
-                    elif part.get("type") == "image_url":
-                        total += 1000  # safe buffer image token cost
+        total = 4
+        content = msg.get("content", "")
+        if isinstance(content, str):
+            total += self.count(content)
+        elif isinstance(content, list):
+            for part in content:
+                if part.get("type") == "text":
+                    total += self.count(part.get("text", ""))
+                elif part.get("type") == "image_url":
+                    total += 1000  # safe buffer image token cost
+        extra = msg.get("reasoning_content") or msg.get("reasoning")
+        if isinstance(extra, str):
+            total += self.count(extra)
+        elif isinstance(msg.get("reasoning_details"), list):
+            for detail in msg["reasoning_details"]:
+                if not isinstance(detail, dict):
+                    continue
+                text = detail.get("text") or detail.get("summary")
+                if isinstance(text, str):
+                    total += self.count(text)
+        return total
+
+    def count_messages(self, messages: list[dict[str, Any]]) -> int:
+        """Approximate token count for a list of chat messages."""
+        total = sum(self.count_message(msg) for msg in messages)
         total += 2  # reply priming
         return total
 
@@ -160,6 +182,10 @@ class ChatSession:
     system_prompt: str | None = None
     ctx_size: int = 8192
     genmax: int = 0
+    # Replay captured reasoning fields on later turns. Providers that own the
+    # policy (via their chat template) ignore fields they do not want; providers
+    # that require them back reject turns without them.
+    preserve_reasoning: bool = True
     # Conversation identity sent as x-opencode-session when the profile opts in.
     # Distinct from the web layer's per-browser session key.
     conversation_id: str = field(default_factory=new_session_id)
@@ -169,6 +195,12 @@ class ChatSession:
     # because a session file's timings would describe a different machine's run.
     last_timing: RequestTimings | None = field(default=None, repr=False)
     _counter: TokenCounter | None = field(default=None, repr=False)
+    # First message index the payload includes. Kept between turns so the prefix
+    # only changes when clipping actually fires, not on every single turn.
+    _clip_start: int = field(default=0, repr=False)
+    # History length when _clip_start was chosen; a shorter history means it was
+    # rewound (undo/edit), so the remembered window no longer applies.
+    _clip_len: int = field(default=0, repr=False)
     # Revert token for the most recent add_user_message (merged?, original_content).
     _last_user_add: tuple[bool, Any] | None = field(default=None, repr=False)
 
@@ -189,6 +221,8 @@ class ChatSession:
         here; the message list is theirs to rebuild.
         """
         self.conversation_id = new_session_id()
+        self._clip_start = 0
+        self._clip_len = 0
 
     def set_system_prompt(self, system_prompt: str | None) -> None:
         """Set the system prompt, starting a new conversation if it changed.
@@ -209,8 +243,15 @@ class ChatSession:
         # precisely (a plain undo() would discard earlier merged-in user text).
         self._last_user_add = self._append("user", content, images)
 
-    def add_assistant_message(self, content: str) -> None:
+    def add_assistant_message(self, content: str, reasoning: dict[str, Any] | None = None) -> None:
+        """Record an assistant turn, keeping its reasoning for replay.
+
+        *reasoning* holds the raw provider fields. They live under a private key
+        so display, copying, and token display only ever see the answer.
+        """
         self._append("assistant", content)
+        if reasoning and self.messages:
+            self.messages[-1]["_reasoning"] = reasoning
         self._last_user_add = None
 
     def revert_last_user_message(self) -> None:
@@ -337,7 +378,28 @@ class ChatSession:
             return True
         return True
 
+    def display_messages(self) -> list[dict[str, Any]]:
+        """Messages as shown to a client: public fields only.
+
+        Private keys (such as the stored reasoning) stay server-side; the UI
+        only ever renders the answer.
+        """
+        return [{key: value for key, value in msg.items() if not key.startswith("_")} for msg in self.messages]
+
     # ── Context clipping ───────────────────────────────────────────────────
+
+    def _for_api(self, msg: dict[str, Any]) -> dict[str, Any]:
+        """Return the wire form of *msg*, replaying reasoning only when enabled.
+
+        Only known reasoning keys are copied, so a hand-edited session file
+        cannot inject message fields such as a different role.
+        """
+        fields = {key: value for key, value in msg.items() if key != "_reasoning"}
+        if self.preserve_reasoning:
+            reasoning = msg.get("_reasoning")
+            if isinstance(reasoning, dict):
+                fields.update({key: reasoning[key] for key in REASONING_FIELDS if key in reasoning})
+        return fields
 
     def build_payload_messages(self) -> list[dict[str, Any]] | None:
         """Build the message list for the API, clipped to fit the context window.
@@ -357,7 +419,7 @@ class ChatSession:
         if not self.messages:
             return prefix if prefix else []
 
-        latest_user = self.messages[-1]
+        latest_user = self._for_api(self.messages[-1])
 
         # Check if system + latest user alone busts the budget.
         mandatory = prefix + [latest_user]
@@ -367,37 +429,64 @@ class ChatSession:
             return None  # signal: message too long
 
         # Build from newest to oldest, accumulating until we hit budget.
-        # Work with a copy of non-system messages.
-        history = list(self.messages)
+        history = [self._for_api(msg) for msg in self.messages]
 
-        # Clip oldest pairs until it fits.
+        # A shortened history was rewound (undo/edit), so the remembered window
+        # no longer describes it.
+        if len(history) < self._clip_len:
+            self._clip_start = 0
+        start = min(self._clip_start, len(history) - 1)
+
+        # Clip oldest turns until it fits.
         while True:
-            candidate = prefix + history
-            # Ensure first non-system message is 'user', not 'assistant'.
-            first_non_sys = 0 if not prefix else 1 if len(candidate) > 1 else 0
-            if first_non_sys < len(candidate) and candidate[first_non_sys]["role"] == "assistant":
-                # Drop the leading assistant message.
-                history = history[1:]
-                continue
+            # Ensure the first non-system message is 'user', not a dangling answer.
+            while start < len(history) and history[start]["role"] == "assistant":
+                start += 1
 
+            candidate = prefix + history[start:]
             tokens = self._counter.count_messages(candidate)
             padding = max(64, len(candidate) * 3)
             if tokens + padding <= budget:
+                self._clip_start = start
+                self._clip_len = len(history)
                 return candidate
-            # Drop the oldest message from history.
-            if len(history) <= 1:
+            # Drop the oldest messages from history.
+            if len(history) - start <= 1:
                 # Only the latest message remains; if it still busts, give up.
                 return None
-            history = history[1:]
+            start = self._trim(prefix, history, start, budget)
+
+    def _trim(self, prefix: list[dict[str, Any]], history: list[dict[str, Any]], start: int, budget: int) -> int:
+        """Return the index to clip to, freeing a chunk of the context window.
+
+        Cutting to a low watermark (rather than to the exact budget) leaves
+        headroom for several more turns, so the retained prefix stays stable and
+        provider-side prefix caching keeps working. Per-message estimates are
+        enough here because the caller re-checks the exact payload.
+        """
+        assert self._counter is not None
+        low = max(1, budget - int(self.ctx_size * CONTEXT_TRIM_FRACTION))
+        remaining = self._counter.count_messages(prefix + history[start:])
+        limit = len(history) - 1
+        drop = start
+        while drop < limit and remaining > low:
+            remaining -= self._counter.count_message(history[drop])
+            drop += 1
+        drop = max(drop, start + 1)  # always make progress
+        # Start the kept history on a user turn when possible, so a reply never
+        # outlives the question it answers.
+        while drop < limit and history[drop]["role"] != "user":
+            drop += 1
+        return drop
 
     def get_token_count(self) -> int:
-        """Count tokens in current history (for display)."""
+        """Count tokens in the current payload (for display)."""
         if self._counter is None:
             return -1
         msgs: list[dict[str, Any]] = []
         if self.system_prompt:
             msgs.append({"role": "system", "content": self.system_prompt})
-        msgs.extend(self.messages)
+        msgs.extend(self._for_api(msg) for msg in self.messages)
         return self._counter.count_messages(msgs)
 
     def get_padding_count(self) -> int:
