@@ -256,6 +256,11 @@ def test_cmd_reasoning(session, app_config):
     handle_command("/reasoning default", session, app_config)
     assert "reasoning_effort" not in app_config.profile.samplers
 
+    # /effort is an alias for /reasoning.
+    handle_command("/effort low", session, app_config)
+    assert app_config.profile.samplers["reasoning_effort"] == "low"
+    assert "low" in handle_command("/effort", session, app_config).message
+
 
 def test_cmd_save_and_load_session(session, app_config, tmp_path):
     session.system_prompt = "SaveSys"

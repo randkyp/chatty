@@ -191,6 +191,7 @@ COMMANDS: list[str] = [
     "/samplers",
     "/sampelrs",
     "/reasoning",
+    "/effort",
     "/save",
     "/load",
     "/image",
@@ -265,7 +266,7 @@ def handle_command(
         case "/samplers":
             return _cmd_samplers(arg, cfg, session)
 
-        case "/reasoning":
+        case "/reasoning" | "/effort":
             return _cmd_reasoning(arg, cfg)
 
         case "/image":
@@ -1013,7 +1014,7 @@ def _cmd_help() -> CommandResult:
         ("/profile [name]", "Show active profile or switch connection profile."),
         ("/apikey [status|clear]", "Enter, inspect, or clear a process-memory API key."),
         ("/samplers [opts]", "Show, set, remove samplers, or save settings (/samplers save)."),
-        ("/reasoning [level]", "Show or set reasoning effort (off/minimal/low/medium/high/xhigh/default)."),
+        ("/reasoning, /effort [level]", "Show or set reasoning effort (off/minimal/low/medium/high/xhigh/default)."),
         ("/image [file]", "Attach an image from file path or clipboard."),
         ("/save [file]", "Save active chat session to session.json or custom file."),
         ("/load [file]", "Load chat session from session.json or custom file."),
