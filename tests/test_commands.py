@@ -362,7 +362,7 @@ def test_cmd_models_list(session, app_config, monkeypatch):
     import chatty.api
 
     app_config.profile.model = "model-2"
-    monkeypatch.setattr(chatty.api, "list_models", lambda b, a: ["model-1", "model-2"])
+    monkeypatch.setattr(chatty.api, "list_models", lambda b, a, s: ["model-1", "model-2"])
     res = handle_command("/models", session, app_config)
     assert res.message is None
     assert res.model_choices == ["model-1", "model-2"]

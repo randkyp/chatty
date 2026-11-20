@@ -16,6 +16,7 @@ from typing import Any
 import tomlkit
 
 from chatty.api import fetch_model_metadata
+from chatty.chat_session import new_session_id
 
 
 class ProfileNotFoundError(Exception):
@@ -67,11 +68,12 @@ base_url = "http://localhost:8080"
 # system_prompt = "You are a helpful assistant."
 # ctx_size = 8192
 # genmax = 0
+# latex = false  # web UI KaTeX math rendering (default off; absent = browser preference)
+# opencode_session = true  # Send x-opencode-session + a chatty User-Agent (OpenCode Go).
 
 # [profile.default.samplers]
 # temperature = 0.7
 # top_p = 0.9
-# latex = false  # web UI KaTeX math rendering (default off; absent = browser preference)
 """
 
 
@@ -93,6 +95,9 @@ class Profile:
     samplers: dict[str, Any] = field(default_factory=dict)
     # Web UI KaTeX rendering. None = no opinion (browser preference, default off).
     latex: bool | None = None
+    # Send OpenCode's session header and identify as chatty in the User-Agent.
+    # Opt-in: other OpenAI-compatible endpoints get the plain client behavior.
+    opencode_session: bool = False
 
 
 @dataclass
@@ -112,6 +117,9 @@ class AppConfig:
     # to another model. Profile limits remain the user's configured values.
     _model_metadata: dict[str, Any] = field(default_factory=dict, repr=False)
     _discovery_pending: bool = field(default=False, repr=False)
+    # Stable identity for requests that have no conversation yet (model
+    # discovery, token counting), so every request to the endpoint carries one.
+    _instance_session_id: str = field(default_factory=new_session_id, repr=False)
 
     @property
     def ctx_size(self) -> int:
@@ -133,6 +141,17 @@ class AppConfig:
     @property
     def ephemeral_api_key_missing(self) -> bool:
         return self.profile.api_key_mode == "ephemeral" and self.effective_api_key is None
+
+    def request_session_id(self, conversation_id: str | None = None) -> str | None:
+        """Return the x-opencode-session value for a request, or None if opted out.
+
+        Conversation requests pass their own id. Session-less auxiliary calls
+        (model discovery, /tokenize) fall back to a per-process id so no request
+        to the endpoint is missing the header.
+        """
+        if not self.profile.opencode_session:
+            return None
+        return conversation_id or self._instance_session_id
 
     def set_ephemeral_api_key(self, api_key: str) -> None:
         if self.profile.api_key_mode != "ephemeral":
@@ -188,6 +207,10 @@ def _load_profile(raw: dict[str, Any], name: str) -> Profile:
         raise ProfileNotFoundError(f"Profile '{name}' cannot configure api_key when api_key_mode is 'ephemeral'.")
     if "latex" in data and not isinstance(data["latex"], bool):
         raise ProfileNotFoundError(f"Profile '{name}' has invalid latex {data['latex']!r}. Expected true or false.")
+    if "opencode_session" in data and not isinstance(data["opencode_session"], bool):
+        raise ProfileNotFoundError(
+            f"Profile '{name}' has invalid opencode_session {data['opencode_session']!r}. Expected true or false."
+        )
     return Profile(
         name=name,
         base_url=data["base_url"].rstrip("/"),
@@ -199,6 +222,7 @@ def _load_profile(raw: dict[str, Any], name: str) -> Profile:
         genmax=data.get("genmax"),
         samplers=dict(data.get("samplers", {})),
         latex=data.get("latex"),
+        opencode_session=data.get("opencode_session", False),
     )
 
 
@@ -331,7 +355,7 @@ def resolve_limits(cfg: AppConfig) -> None:
         return  # Retry discovery after key entry; do not install a default model.
     if p.ctx_size is not None and p.genmax is not None and p.model:
         return
-    cfg._model_metadata = fetch_model_metadata(p.base_url, cfg.effective_api_key, p.model)
+    cfg._model_metadata = fetch_model_metadata(p.base_url, cfg.effective_api_key, p.model, cfg.request_session_id())
     if not p.model:
         p.model = cfg._model_metadata.get("model_id")
 
@@ -390,6 +414,11 @@ def save_profile(cfg: AppConfig) -> None:
         p_table["latex"] = p.latex
     elif "latex" in p_table:
         del p_table["latex"]
+
+    if p.opencode_session:
+        p_table["opencode_session"] = True
+    elif "opencode_session" in p_table:
+        del p_table["opencode_session"]
 
     # TOML has no null type, so drop None-valued samplers rather than emitting
     # invalid TOML (the old _serialise_value repr() fallback could do exactly that).

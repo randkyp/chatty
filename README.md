@@ -53,6 +53,23 @@ The Web control sends the key in plaintext inside the WebSocket connection. Use 
 connection crosses an untrusted network. Ephemeral mode is explicit profile opt-in; it does not restrict which connected
 browser may replace the profile's process-wide key.
 
+### OpenCode Go
+
+Profiles that talk to OpenCode Go (or a proxy in front of it) should set:
+
+```toml
+[profile.opencode]
+base_url = "https://opencode.ai/inference/go"
+api_key_mode = "ephemeral"
+opencode_session = true
+```
+
+This sends `x-opencode-session` with a stable id per conversation, and identifies chatty with its own `User-Agent`
+instead of the generic HTTP-library one. OpenCode uses both for backend routing and prompt caching; requests without
+the header can be rejected with `400 MissingSessionID`. The id is regenerated when a conversation actually starts over
+(`/clear`, `/load`) or when the system prompt changes, because the cached prefix no longer applies. It is never written
+to config or session files.
+
 ### Input Features
 
 - **Send:** `Enter` sends, `Shift+Enter` adds a new line (in CLI use `Esc → Enter`). Flip this with `-e/--multiline`.

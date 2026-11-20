@@ -9,6 +9,7 @@ oldest user/assistant pairs until the history fits within ctx_size - genmax.
 from __future__ import annotations
 
 import json
+import secrets
 from collections import OrderedDict
 from dataclasses import dataclass, field
 from typing import Any
@@ -17,6 +18,18 @@ import httpx
 import tiktoken
 
 from chatty.api import _auth_headers, get_client
+
+# ── Conversation identity ──────────────────────────────────────────────────
+
+
+def new_session_id() -> str:
+    """Return an opaque, conversation-scoped id for the OpenCode session header.
+
+    The value only has to be stable for one conversation and unique between
+    conversations; OpenCode does not parse it.
+    """
+    return "ses_" + secrets.token_urlsafe(24)
+
 
 # ── Token counting ─────────────────────────────────────────────────────────
 
@@ -28,6 +41,7 @@ class TokenCounter:
     base_url: str
     api_key: str | None = field(default=None, repr=False)
     server_enabled: bool = field(default=True, repr=False)
+    opencode_session: str | None = field(default=None, repr=False)
     _use_server: bool | None = field(default=None, repr=False)
     _tiktoken_enc: Any = field(default=None, repr=False)
     _cache: OrderedDict[tuple[bool | None, str], int] = field(default_factory=OrderedDict, repr=False)
@@ -42,7 +56,7 @@ class TokenCounter:
         return get_client(self.base_url, self.api_key).post(
             f"{self.base_url}/tokenize",
             json={"content": text},
-            headers=_auth_headers(self.api_key),
+            headers=_auth_headers(self.api_key, self.opencode_session),
             timeout=5.0,
         )
 
@@ -145,6 +159,9 @@ class ChatSession:
     system_prompt: str | None = None
     ctx_size: int = 8192
     genmax: int = 0
+    # Conversation identity sent as x-opencode-session when the profile opts in.
+    # Distinct from the web layer's per-browser session key.
+    conversation_id: str = field(default_factory=new_session_id)
     messages: list[dict[str, Any]] = field(default_factory=list)
     pending_images: list[dict[str, Any]] = field(default_factory=list)
     _counter: TokenCounter | None = field(default=None, repr=False)
@@ -160,6 +177,26 @@ class ChatSession:
 
     def set_counter(self, counter: TokenCounter) -> None:
         self._counter = counter
+
+    def start_new_conversation(self) -> None:
+        """Give the next request a fresh routing/caching identity.
+
+        Callers that replace history rather than append to it (/load) restart
+        here; the message list is theirs to rebuild.
+        """
+        self.conversation_id = new_session_id()
+
+    def set_system_prompt(self, system_prompt: str | None) -> None:
+        """Set the system prompt, starting a new conversation if it changed.
+
+        The system message sits at the top of every payload, so changing it
+        invalidates the provider's cached prefix. Re-setting the current value
+        (or only displaying it) must not churn the conversation id.
+        """
+        if system_prompt == self.system_prompt:
+            return
+        self.system_prompt = system_prompt
+        self.start_new_conversation()
 
     # ── History manipulation ───────────────────────────────────────────────
 
@@ -278,9 +315,10 @@ class ChatSession:
             raise
 
     def clear(self) -> None:
-        """Clear user/assistant history (system prompt is re-injected at send time)."""
+        """Clear user/assistant history and start a new conversation identity."""
         self.messages.clear()
         self.pending_images.clear()
+        self.start_new_conversation()
 
     def undo(self) -> bool:
         """Remove the last assistant+user pair. Returns False if nothing to undo."""

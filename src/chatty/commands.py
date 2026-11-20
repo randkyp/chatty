@@ -322,10 +322,10 @@ def _cmd_system(arg: str, session: ChatSession, cfg: AppConfig) -> CommandResult
             return CommandResult(message=f"System prompt: {session.system_prompt}")
         return CommandResult(message="No system prompt set.")
     if arg.lower() in ("disable", "none", "clear", "del", "rm", "off"):
-        session.system_prompt = None
+        session.set_system_prompt(None)
         cfg.profile.system_prompt = None
         return CommandResult(message="System prompt disabled.")
-    session.system_prompt = arg
+    session.set_system_prompt(arg)
     cfg.profile.system_prompt = arg
     return CommandResult(message="System prompt updated.")
 
@@ -382,7 +382,7 @@ def _cmd_profile(arg: str, session: ChatSession, cfg: AppConfig) -> CommandResul
         return CommandResult(message=str(e))
     new_profile = cfg.profile
     sync_profile_settings(session, cfg)
-    session.system_prompt = new_profile.system_prompt
+    session.set_system_prompt(new_profile.system_prompt)
     if new_profile.latex is True:
         latex_note = " LaTeX rendering on."
     elif new_profile.latex is False:
@@ -442,11 +442,13 @@ def sync_token_counter(session: ChatSession, cfg: AppConfig) -> None:
         session.genmax = cfg.genmax
     current = session._counter
     server_enabled = not cfg.ephemeral_api_key_missing
+    opencode_session = cfg.request_session_id()
     if (
         current is not None
         and current.base_url == cfg.profile.base_url
         and current.api_key == cfg.effective_api_key
         and current.server_enabled == server_enabled
+        and current.opencode_session == opencode_session
     ):
         return
     session.set_counter(
@@ -454,6 +456,7 @@ def sync_token_counter(session: ChatSession, cfg: AppConfig) -> None:
             base_url=cfg.profile.base_url,
             api_key=cfg.effective_api_key,
             server_enabled=server_enabled,
+            opencode_session=opencode_session,
         )
     )
 
@@ -721,11 +724,17 @@ def _cmd_load_session(arg: str, session: ChatSession, cfg: AppConfig) -> Command
 
         # Commit only after the complete file has parsed and validated.
         session.messages = messages
-        for name, value in metadata.items():
-            setattr(session, name, value)
-            setattr(cfg.profile, name, value)
+        if "system_prompt" in metadata:
+            session.set_system_prompt(metadata["system_prompt"])
+            cfg.profile.system_prompt = metadata["system_prompt"]
+        for name in ("ctx_size", "genmax"):
+            if name in metadata:
+                setattr(session, name, metadata[name])
+                setattr(cfg.profile, name, metadata[name])
         session.pending_images.clear()
         session._last_user_add = None
+        # Loading is a new conversation, even when the loaded prompt matches.
+        session.start_new_conversation()
 
         return CommandResult(
             message=f"Session restored from {resolved_path} ({len(messages)} messages loaded).",
@@ -861,7 +870,7 @@ def _cmd_models(arg: str, session: ChatSession, cfg: AppConfig) -> CommandResult
             return CommandResult(message=EPHEMERAL_KEY_REQUIRED)
         from chatty.api import list_models
 
-        models = list_models(cfg.profile.base_url, cfg.effective_api_key)
+        models = list_models(cfg.profile.base_url, cfg.effective_api_key, cfg.request_session_id())
         if not models:
             return CommandResult(message="Failed to fetch models or no models found.")
         return CommandResult(model_choices=models, model_current=cfg.profile.model)

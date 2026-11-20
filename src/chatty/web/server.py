@@ -192,6 +192,7 @@ async def _stream_to_ws(
             samplers=cfg.profile.samplers,
             genmax=session.genmax,
             debug=cfg.debug,
+            opencode_session=cfg.request_session_id(session.conversation_id),
         ):
             if event_type == "error":
                 await sender.send("error", content)

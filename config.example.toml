@@ -13,6 +13,7 @@ base_url = "http://localhost:8080"
 # ctx_size = 8192
 # genmax = 0
 # latex = false  # web UI KaTeX math rendering (default off; absent = browser preference)
+# opencode_session = true  # Send x-opencode-session + a chatty User-Agent (OpenCode Go).
 
 # [profile.default.samplers]
 # temperature = 0.7
@@ -50,3 +51,11 @@ base_url = "http://localhost:8080"
 #
 # [profile.local.samplers.chat_template_kwargs]
 # add_generation_prompt = true
+
+# ── Example: OpenCode Go ────────────────────────────────────────────────────
+
+# [profile.opencode]
+# base_url = "https://opencode.ai/inference/go"
+# api_key_mode = "ephemeral"
+# opencode_session = true  # Required by Go: sends x-opencode-session + chatty UA.
+# model = "kimi-k3"

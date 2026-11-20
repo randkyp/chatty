@@ -62,6 +62,7 @@ def stream_and_render(
     genmax: int,
     *,
     label: str = "Assistant",
+    conversation_id: str | None = None,
 ) -> tuple[str, bool, dict | None]:
     """Stream a completion and render it to the terminal.
 
@@ -82,6 +83,7 @@ def stream_and_render(
         samplers=cfg.profile.samplers,
         genmax=genmax,
         debug=cfg.debug,
+        opencode_session=cfg.request_session_id(conversation_id),
     )
 
     collected: list[str] = []
@@ -206,7 +208,9 @@ def _handle_command_result(result: CommandResult, session: ChatSession, cfg: App
 
     if result.ephemeral_prompt:
         messages = [{"role": "user", "content": result.ephemeral_prompt}]
-        stream_and_render(cfg, messages, session.genmax, label="Assistant (ephemeral)")
+        stream_and_render(
+            cfg, messages, session.genmax, label="Assistant (ephemeral)", conversation_id=session.conversation_id
+        )
         return False
 
     if result.resend_user:
@@ -288,7 +292,9 @@ def _budget_warning(session: ChatSession) -> None:
 def _stream_record_report(session: ChatSession, cfg: AppConfig, payload_messages: list[dict]) -> None:
     """Stream a response for *payload_messages*, record it, and report tokens."""
     start = time.monotonic()
-    full_response, _interrupted, usage = stream_and_render(cfg, payload_messages, session.genmax)
+    full_response, _interrupted, usage = stream_and_render(
+        cfg, payload_messages, session.genmax, conversation_id=session.conversation_id
+    )
     elapsed = time.monotonic() - start
 
     if full_response:

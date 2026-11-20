@@ -10,12 +10,26 @@ from __future__ import annotations
 
 import json
 from collections.abc import AsyncGenerator, Generator
+from importlib.metadata import PackageNotFoundError, version
 from typing import Any, Literal
 
 import httpx
 
 # Connect quickly-failing but allow unbounded streaming reads.
 STREAM_TIMEOUT = httpx.Timeout(connect=10.0, read=None, write=10.0, pool=10.0)
+
+OPENCODE_SESSION_HEADER = "x-opencode-session"
+
+
+def _client_version() -> str:
+    try:
+        return version("chatty")
+    except PackageNotFoundError:
+        return "dev"
+
+
+# Identifies the client to providers that reject generic SDK/HTTP-library user agents.
+USER_AGENT = f"chatty/{_client_version()}"
 
 # One client per endpoint so TLS handshakes/connections are reused. Credentials
 # are request headers, so they do not belong in the cache key (and therefore do
@@ -42,13 +56,15 @@ def close_clients() -> None:
     _CLIENT_CACHE.clear()
 
 
-def fetch_model_metadata(base_url: str, api_key: str | None, model_id: str | None = None) -> dict[str, Any]:
+def fetch_model_metadata(
+    base_url: str, api_key: str | None, model_id: str | None = None, opencode_session: str | None = None
+) -> dict[str, Any]:
     """Try to fetch context length and max tokens from /v1/models.
 
     Match the selected model exactly, or discover the first model if unset.
     Unknown models never borrow another model's limits. On failure, return {}.
     """
-    headers = _auth_headers(api_key)
+    headers = _auth_headers(api_key, opencode_session)
     result: dict[str, Any] = {}
     try:
         resp = httpx.get(f"{base_url}/v1/models", headers=headers, timeout=10.0)
@@ -108,9 +124,9 @@ def normalize_model_ids(raw_ids: object) -> list[str]:
     return unique
 
 
-def list_models(base_url: str, api_key: str | None) -> list[str]:
+def list_models(base_url: str, api_key: str | None, opencode_session: str | None = None) -> list[str]:
     """Fetch available models from /v1/models, normalized centrally."""
-    headers = _auth_headers(api_key)
+    headers = _auth_headers(api_key, opencode_session)
     try:
         resp = httpx.get(f"{base_url}/v1/models", headers=headers, timeout=10.0)
         if resp.status_code == 200:
@@ -171,6 +187,7 @@ def stream_chat(
     samplers: dict[str, Any],
     genmax: int,
     debug: bool = False,
+    opencode_session: str | None = None,
 ) -> Generator[tuple[Literal["delta", "error", "usage"], str], None, None]:
     """Stream a chat completion. Yields structured events.
 
@@ -180,7 +197,9 @@ def stream_chat(
     """
     payload = _stream_payload(model, messages, samplers, genmax, debug)
 
-    headers = _auth_headers(api_key)
+    headers = _auth_headers(api_key, opencode_session)
+    if debug:
+        _print_debug_headers(headers)
     client = get_client(base_url, api_key)
 
     try:
@@ -222,14 +241,18 @@ async def stream_chat_async(
     samplers: dict[str, Any],
     genmax: int,
     debug: bool = False,
+    opencode_session: str | None = None,
 ) -> AsyncGenerator[tuple[Literal["delta", "error", "usage"], str], None]:
     """Stream web completions with cancellable reads and task-owned connections."""
     payload = _stream_payload(model, messages, samplers, genmax, debug)
+    headers = _auth_headers(api_key, opencode_session)
+    if debug:
+        _print_debug_headers(headers)
 
     try:
         async with httpx.AsyncClient(timeout=STREAM_TIMEOUT, http2=False) as client:
             async with client.stream(
-                "POST", f"{base_url}/v1/chat/completions", json=payload, headers=_auth_headers(api_key)
+                "POST", f"{base_url}/v1/chat/completions", json=payload, headers=headers
             ) as response:
                 if response.status_code != 200:
                     body = (await response.aread()).decode(errors="replace")
@@ -251,8 +274,24 @@ async def stream_chat_async(
         yield "error", f"HTTP error: {e}"
 
 
-def _auth_headers(api_key: str | None) -> dict[str, str]:
+def _auth_headers(api_key: str | None, opencode_session: str | None = None) -> dict[str, str]:
+    """Build request headers; *opencode_session* enables the OpenCode identity.
+
+    ``None`` means the profile did not opt in, so no User-Agent or session
+    header is sent and the client keeps httpx's default behavior.
+    """
     headers: dict[str, str] = {"Content-Type": "application/json"}
+    if opencode_session is not None:
+        headers["User-Agent"] = USER_AGENT
+        headers[OPENCODE_SESSION_HEADER] = opencode_session
     if api_key:
         headers["Authorization"] = f"Bearer {api_key}"
     return headers
+
+
+def _print_debug_headers(headers: dict[str, str]) -> None:
+    """Print request headers under --debug, keeping the bearer token out of logs."""
+    redacted = {k: ("Bearer ***" if k.lower() == "authorization" else v) for k, v in headers.items()}
+    print("\n── DEBUG: request headers ──")
+    print(json.dumps(redacted, indent=2, ensure_ascii=False))
+    print("── end headers ──\n")
