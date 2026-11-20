@@ -34,6 +34,7 @@ from chatty.commands import (
     sync_token_counter,
 )
 from chatty.config import EPHEMERAL_KEY_REQUIRED, AppConfig, load_config, resolve_limits
+from chatty.timing import RequestTimings
 
 app = FastAPI()
 BASE_DIR = Path(__file__).parent
@@ -173,15 +174,21 @@ async def _stream_to_ws(
     streaming: asyncio.Event,
     *,
     record: bool,
+    timings: RequestTimings | None = None,
 ) -> None:
+    record_timings = timings if timings is not None else RequestTimings()
     if cfg.ephemeral_api_key_missing:
         if record:
             session.revert_last_user_message()
+        record_timings.error = EPHEMERAL_KEY_REQUIRED
+        record_timings.finish()
+        session.last_timing = record_timings
         await sender.send("error", EPHEMERAL_KEY_REQUIRED)
         return
 
     await sender.send("stream_start", "", ephemeral=not record)
     collected: list[str] = []
+    interrupted = False
     streaming.set()
     try:
         async for event_type, content in stream_chat_async(
@@ -193,17 +200,25 @@ async def _stream_to_ws(
             genmax=session.genmax,
             debug=cfg.debug,
             opencode_session=cfg.request_session_id(session.conversation_id),
+            timings=record_timings,
         ):
             if event_type == "error":
+                record_timings.error = content
                 await sender.send("error", content)
+                continue
+            if event_type == "reasoning":
+                # Shown transiently above the answer; never part of the message.
+                await sender.send("stream_reasoning", content)
                 continue
             if event_type == "delta":
                 collected.append(content)
                 await sender.send("stream_chunk", content)
     except asyncio.CancelledError:
-        pass
+        interrupted = True
     finally:
         streaming.clear()
+        record_timings.finish(interrupted=interrupted)
+        session.last_timing = record_timings
     full_response = "".join(collected)
     if record:
         if full_response:
@@ -258,15 +273,16 @@ async def _handle_message(
 
         if result.ephemeral_prompt:
             messages = [{"role": "user", "content": result.ephemeral_prompt}]
-            await _stream_to_ws(cfg, session, messages, sender, streaming, record=False)
+            await _stream_to_ws(cfg, session, messages, sender, streaming, record=False, timings=RequestTimings())
             return False
 
         if result.resend_user:
+            timings = RequestTimings()
             payload = await asyncio.to_thread(session.build_payload_messages)
             if payload is None:
                 await sender.send("warning", "Context budget exceeded.")
             else:
-                await _stream_to_ws(cfg, session, payload, sender, streaming, record=True)
+                await _stream_to_ws(cfg, session, payload, sender, streaming, record=True, timings=timings)
             return False
 
         if result.copy_last:
@@ -301,6 +317,7 @@ async def _handle_message(
     # ── Normal send ─────────────────────────────────────────────────────────
     # Payload construction counts tokens (possibly via blocking /tokenize HTTP);
     # keep it off the event loop so Stop and other frames stay receivable.
+    timings = RequestTimings()
     payload_messages, attached = await asyncio.to_thread(
         session.stage_user_message, text, extra_images=_coerce_images(raw_images)
     )
@@ -321,7 +338,7 @@ async def _handle_message(
 
     if not cfg.ephemeral_api_key_missing:
         await sender.send("history", session.messages)
-    await _stream_to_ws(cfg, session, payload_messages, sender, streaming, record=True)
+    await _stream_to_ws(cfg, session, payload_messages, sender, streaming, record=True, timings=timings)
     return False
 
 

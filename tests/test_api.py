@@ -157,3 +157,80 @@ def test_get_client_is_reused():
     c3 = get_client("http://other", "key")
     assert c3 is not c1
     close_clients()
+
+
+def test_stream_chat_emits_reasoning_before_content(respx_mock):
+    body = (
+        'data: {"choices": [{"delta": {"reasoning_content": "step one"}}]}\n\n'
+        'data: {"choices": [{"delta": {"content": "answer"}}]}\n\n'
+        "data: [DONE]\n"
+    )
+    respx_mock.post("http://up/v1/chat/completions").respond(
+        200, text=body, headers={"content-type": "text/event-stream"}
+    )
+    events = list(stream_chat("http://up", None, "m", [{"role": "user", "content": "x"}], {}, 0))
+    assert events == [("reasoning", "step one"), ("delta", "answer")]
+
+
+def test_stream_chat_accepts_openrouter_style_reasoning(respx_mock):
+    body = (
+        'data: {"choices": [{"delta": {"reasoning": "hm"}}]}\n\n'
+        'data: {"choices": [{"delta": {"content": "ok"}}]}\n\n'
+        "data: [DONE]\n"
+    )
+    respx_mock.post("http://up/v1/chat/completions").respond(
+        200, text=body, headers={"content-type": "text/event-stream"}
+    )
+    events = list(stream_chat("http://up", None, "m", [{"role": "user", "content": "x"}], {}, 0))
+    assert ("reasoning", "hm") in events
+
+
+def test_stream_chat_stamps_request_timings(respx_mock):
+    from chatty.timing import RequestTimings
+
+    body = (
+        'data: {"choices": [{"delta": {"reasoning_content": "hm"}}]}\n\n'
+        'data: {"choices": [{"delta": {"content": "Hi"}}]}\n\n'
+        'data: {"choices": [], "usage": {"prompt_tokens": 3, "completion_tokens": 1, "total_tokens": 4}}\n\n'
+        "data: [DONE]\n"
+    )
+    respx_mock.post("http://up/v1/chat/completions").respond(
+        200,
+        text=body,
+        headers={"content-type": "text/event-stream", "openai-processing-ms": "120"},
+    )
+    timings = RequestTimings()
+    list(stream_chat("http://up", None, "m", [{"role": "user", "content": "x"}], {}, 0, timings=timings))
+
+    assert timings.dispatched_at is not None
+    assert timings.headers_at is not None
+    assert timings.first_reasoning_at is not None
+    assert timings.first_content_at is not None
+    assert timings.usage["completion_tokens"] == 1
+    assert timings.server_prompt_seconds == 0.12
+
+
+def test_stream_chat_reads_llamacpp_timings_block(respx_mock):
+    from chatty.timing import RequestTimings
+
+    body = (
+        'data: {"choices": [{"delta": {"content": "Hi"}}]}\n\n'
+        'data: {"choices": [], "timings": {"prompt_ms": 250, "predicted_ms": 900}}\n\n'
+        "data: [DONE]\n"
+    )
+    respx_mock.post("http://up/v1/chat/completions").respond(
+        200, text=body, headers={"content-type": "text/event-stream"}
+    )
+    timings = RequestTimings()
+    list(stream_chat("http://up", None, "m", [{"role": "user", "content": "x"}], {}, 0, timings=timings))
+    assert timings.server_prompt_seconds == 0.25
+    assert timings.server_timings["predicted_ms"] == 900
+
+
+def test_stream_chat_marks_http_errors_in_timings(respx_mock):
+    from chatty.timing import RequestTimings
+
+    respx_mock.post("http://up/v1/chat/completions").respond(500, text="boom")
+    timings = RequestTimings()
+    list(stream_chat("http://up", None, "m", [], {}, 0, timings=timings))
+    assert timings.error == "HTTP 500"

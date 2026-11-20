@@ -18,6 +18,7 @@ import httpx
 import tiktoken
 
 from chatty.api import _auth_headers, get_client
+from chatty.timing import RequestTimings
 
 # ── Conversation identity ──────────────────────────────────────────────────
 
@@ -164,6 +165,9 @@ class ChatSession:
     conversation_id: str = field(default_factory=new_session_id)
     messages: list[dict[str, Any]] = field(default_factory=list)
     pending_images: list[dict[str, Any]] = field(default_factory=list)
+    # Timings for the most recent request. In memory only: never saved or loaded,
+    # because a session file's timings would describe a different machine's run.
+    last_timing: RequestTimings | None = field(default=None, repr=False)
     _counter: TokenCounter | None = field(default=None, repr=False)
     # Revert token for the most recent add_user_message (merged?, original_content).
     _last_user_add: tuple[bool, Any] | None = field(default=None, repr=False)

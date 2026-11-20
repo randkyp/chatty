@@ -17,14 +17,30 @@ def test_last_assistant_text_none_when_empty():
     assert main._last_assistant_text(ChatSession()) is None
 
 
+def _record(usage, *, finished=2.6):
+    """A timing record with plausible stamps and a 2s decode phase."""
+    from chatty.timing import RequestTimings
+
+    record = RequestTimings()
+    record.submitted_at = 0.0
+    record.dispatched_at = 0.1
+    record.headers_at = 0.2
+    record.first_content_at = 0.5
+    record.last_content_at = 2.5
+    record.finished_at = finished
+    record.usage = usage
+    return record
+
+
 def test_report_tokens_prefers_real_usage(monkeypatch):
     msgs = []
     monkeypatch.setattr(main, "print_system", lambda m: msgs.append(m))
     s = ChatSession()
     usage = {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15}
-    main._report_tokens(s, usage, elapsed=2.0)
+    main._report_tokens(s, _record(usage))
     assert "15" in msgs[0]
-    assert "tok/s" in msgs[0]  # rate shown when elapsed > 0
+    assert "tok/s" in msgs[0]  # decode rate shown when a span was measured
+    assert "10 in" in msgs[0]
 
 
 def test_report_tokens_falls_back_to_estimate(monkeypatch):
@@ -35,18 +51,23 @@ def test_report_tokens_falls_back_to_estimate(monkeypatch):
         def count_messages(self, m):
             return 7
 
+    from chatty.timing import RequestTimings
+
     s = ChatSession()
     s.set_counter(_C())
-    main._report_tokens(s, usage=None, elapsed=1.0)
+    main._report_tokens(s, RequestTimings())
     assert "~7" in msgs[0]
     assert "budget" in msgs[0]
 
 
 def test_format_elapsed_uses_compact_duration_units():
-    assert main._format_elapsed(5.2) == "5s"
-    assert main._format_elapsed(60.0) == "1m"
-    assert main._format_elapsed(90.0) == "1m 30s"
-    assert main._format_elapsed(3_600.0) == "1h"
+    from chatty.timing import format_elapsed
+
+    assert format_elapsed(5.2) == "5s"
+    assert format_elapsed(60.0) == "1m"
+    assert format_elapsed(90.0) == "1m 30s"
+    assert format_elapsed(3_600.0) == "1h"
+    assert format_elapsed(None) == "n/a"
 
 
 def test_stream_and_render_collects_text(monkeypatch):
@@ -210,3 +231,26 @@ def test_main_preprompts_for_missing_ephemeral_key(monkeypatch):
 
     assert prompts == ["prompted"]
     assert cfg.effective_api_key == "startup-secret"
+
+
+def test_thinking_line_keeps_only_the_tail():
+    line = main._thinking_line("word " * 200)
+    text = line.plain
+    assert text.startswith("thinking › …")
+    assert text.rstrip().endswith("word")
+    assert "\n" not in text
+
+
+def test_stream_and_render_shows_reasoning_transiently(monkeypatch):
+    def fake_stream(**kwargs):
+        yield ("reasoning", "weighing options")
+        yield ("reasoning", " more carefully")
+        yield ("delta", "answer")
+        yield ("usage", '{"completion_tokens": 1, "prompt_tokens": 2}')
+
+    monkeypatch.setattr(main, "stream_chat", lambda **kw: fake_stream(**kw))
+    cfg = AppConfig(config_path=None, profile=Profile(name="p", base_url="http://x"), raw_output=False)
+    text, interrupted, usage = main.stream_and_render(cfg, [{"role": "user", "content": "hi"}], genmax=0)
+    assert text == "answer"
+    assert interrupted is False
+    assert usage["completion_tokens"] == 1

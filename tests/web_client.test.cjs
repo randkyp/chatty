@@ -10,6 +10,13 @@ function client() {
         set innerHTML(value) { this.html = value; this.children = []; }
         get innerHTML() { return this.html; }
         appendChild(child) { child.parentElement = this; this.children.push(child); }
+        insertBefore(child, before) {
+            child.parentElement = this;
+            const index = this.children.indexOf(before);
+            if (index === -1) this.children.push(child);
+            else this.children.splice(index, 0, child);
+            return child;
+        }
         remove() { this.parentElement.children = this.parentElement.children.filter(c => c !== this); }
         setAttribute() {}
         removeAttribute() {}
@@ -155,4 +162,32 @@ test('failed submission keeps text typed while it was running', () => {
     run(`input.value='question'; sendMessage(); input.value='follow-up';
         handleServerMessage({type:'submission_done', content:[], accepted:false});`);
     assert.equal(run('input.value'), 'question\n\nfollow-up');
+});
+
+test('reasoning is a transient line above the answer, never in history', () => {
+    const run = client();
+    run(`handleServerMessage({type:'stream_start', ephemeral:false});
+        handleServerMessage({type:'stream_reasoning', content:'weighing'});
+        handleServerMessage({type:'stream_reasoning', content:' options'});`);
+    assert.equal(run("history.children.filter(c => c.className === 'message reasoning').length"), 1);
+    assert.equal(run("history.children.find(c => c.className === 'message reasoning').textContent"),
+        'thinking › weighing options');
+    // The reasoning line sits above the assistant message.
+    assert.equal(run("history.children[history.children.length - 2].className"), 'message reasoning');
+
+    run(`handleServerMessage({type:'stream_chunk', content:'answer'});
+        handleServerMessage({type:'stream_end'});
+        handleServerMessage({type:'submission_done', accepted:true, content:[
+            {role:'user', content:'question'}, {role:'assistant', content:'answer'}]});`);
+    assert.equal(run("history.children.some(c => c.className === 'message reasoning')"), false);
+    assert.deepEqual(Array.from(run('history.children.map(c => c.textContent || c.innerHTML)')),
+        ['> question', 'answer']);
+});
+
+test('reasoning line keeps only the newest text', () => {
+    const run = client();
+    run(`handleServerMessage({type:'stream_start', ephemeral:false});
+        handleServerMessage({type:'stream_reasoning', content:'a'.repeat(400) + 'END'});`);
+    assert.equal(run("history.children.find(c => c.className === 'message reasoning').textContent.length") <= 12 + 240 + 1, true);
+    assert.equal(run("history.children.find(c => c.className === 'message reasoning').textContent.endsWith('END')"), true);
 });

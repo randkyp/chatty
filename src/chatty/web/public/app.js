@@ -30,6 +30,10 @@ const webClientId = randomId();
 
 let currentAssistantDiv = null;
 let currentAssistantContent = '';
+let currentReasoningDiv = null;
+let currentReasoningText = '';
+// Characters of reasoning kept on the transient line; the newest text signals liveness.
+const REASONING_TAIL_CHARS = 240;
 let thinkingInterval = null;
 let thinkingStartTime = null;
 let currentCommandDiv = null;
@@ -292,6 +296,31 @@ function stopThinking() {
     }
 }
 
+// Transient single line above the answer: newest reasoning text wins, no growth.
+function showReasoning(text) {
+    if (!currentReasoningDiv) {
+        currentReasoningDiv = document.createElement('div');
+        currentReasoningDiv.className = 'message reasoning';
+        if (currentAssistantDiv && currentAssistantDiv.parentElement === history) {
+            history.insertBefore(currentReasoningDiv, currentAssistantDiv);
+        } else {
+            history.appendChild(currentReasoningDiv);
+        }
+    }
+    currentReasoningText += text;
+    const flat = currentReasoningText.replace(/\s+/g, ' ').trim();
+    const tail = flat.length > REASONING_TAIL_CHARS ? '…' + flat.slice(-REASONING_TAIL_CHARS) : flat;
+    currentReasoningDiv.textContent = `thinking › ${tail}`;
+}
+
+function clearReasoning() {
+    if (currentReasoningDiv) {
+        currentReasoningDiv.remove();
+        currentReasoningDiv = null;
+    }
+    currentReasoningText = '';
+}
+
 // ── Model picker (transient listbox above the composer) ─────────────────────
 let modelPicker = null; // {models, current, filtered, highlight, element, listEl, selecting}
 
@@ -498,6 +527,7 @@ function handleServerMessage(data) {
             break;
         case 'error':
             stopThinking();
+            clearReasoning();
             if (currentAssistantDiv && currentAssistantContent === '') {
                 currentAssistantDiv.innerHTML = '';
             }
@@ -554,6 +584,7 @@ function handleServerMessage(data) {
             if (data.ephemeral) appendSystemMessage('/btw — outside conversation context');
             history.appendChild(currentAssistantDiv);
             currentAssistantContent = '';
+            clearReasoning();
             currentAssistantDiv.innerHTML = '<em>Thinking... 0.0s</em>';
             thinkingStartTime = Date.now();
             thinkingInterval = setInterval(() => {
@@ -563,6 +594,14 @@ function handleServerMessage(data) {
                 }
             }, 100);
             break;
+        case 'stream_reasoning':
+            // Hand the thinking timer over to the reasoning line.
+            stopThinking();
+            if (currentAssistantDiv && currentAssistantContent === '') {
+                currentAssistantDiv.innerHTML = '';
+            }
+            showReasoning(data.content);
+            break;
         case 'stream_chunk':
             stopThinking();
             currentAssistantContent += data.content;
@@ -570,6 +609,7 @@ function handleServerMessage(data) {
             break;
         case 'stream_end':
             stopThinking();
+            clearReasoning();
             setStreaming(false);
             if (currentAssistantDiv) {
                 if (currentAssistantContent === '' || currentAssistantDiv.className === 'message assistant pending') {

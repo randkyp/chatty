@@ -15,6 +15,8 @@ from typing import Any, Literal
 
 import httpx
 
+from chatty.timing import RequestTimings
+
 # Connect quickly-failing but allow unbounded streaming reads.
 STREAM_TIMEOUT = httpx.Timeout(connect=10.0, read=None, write=10.0, pool=10.0)
 
@@ -160,7 +162,10 @@ def _stream_payload(
     return payload
 
 
-def _stream_events(data: str) -> Generator[tuple[Literal["delta", "error", "usage"], str], None, None]:
+StreamEvent = tuple[Literal["delta", "reasoning", "error", "usage", "timings"], str]
+
+
+def _stream_events(data: str) -> Generator[StreamEvent, None, None]:
     try:
         chunk = json.loads(data)
     except json.JSONDecodeError:
@@ -170,13 +175,20 @@ def _stream_events(data: str) -> Generator[tuple[Literal["delta", "error", "usag
         msg = err.get("message") if isinstance(err, dict) else str(err)
         yield "error", f"Server error: {msg}"
         return
+    if chunk.get("timings"):
+        # Non-standard llama.cpp block: measured prompt/decode durations.
+        yield "timings", json.dumps(chunk["timings"])
     if chunk.get("usage"):
         yield "usage", json.dumps(chunk["usage"])
     choices = chunk.get("choices", [])
     if choices:
-        delta = choices[0].get("delta", {}).get("content", "")
-        if delta:
-            yield "delta", delta
+        delta = choices[0].get("delta", {})
+        reasoning = delta.get("reasoning_content") or delta.get("reasoning")
+        if isinstance(reasoning, str) and reasoning:
+            yield "reasoning", reasoning
+        content = delta.get("content", "")
+        if content:
+            yield "delta", content
 
 
 def stream_chat(
@@ -188,12 +200,17 @@ def stream_chat(
     genmax: int,
     debug: bool = False,
     opencode_session: str | None = None,
-) -> Generator[tuple[Literal["delta", "error", "usage"], str], None, None]:
+    timings: RequestTimings | None = None,
+) -> Generator[StreamEvent, None, None]:
     """Stream a chat completion. Yields structured events.
 
     On connection/API errors, yields a single event ("error", message) so the
-    caller can display it. Otherwise yields ("delta", text) events and, if the
-    server reports it, a final ("usage", json) event carrying token counts.
+    caller can display it. Otherwise yields ("delta", text) events, ("reasoning",
+    text) for providers that stream thinking, and, if the server reports them, a
+    final ("usage", json) event carrying token counts.
+
+    *timings*, when given, is stamped as the request progresses so the caller
+    can report a per-stage breakdown afterwards.
     """
     payload = _stream_payload(model, messages, samplers, genmax, debug)
 
@@ -202,6 +219,8 @@ def stream_chat(
         _print_debug_headers(headers)
     client = get_client(base_url, api_key)
 
+    if timings is not None:
+        timings.mark_dispatched()
     try:
         with client.stream(
             "POST",
@@ -209,6 +228,9 @@ def stream_chat(
             json=payload,
             headers=headers,
         ) as response:
+            if timings is not None:
+                timings.mark_headers(response.headers)
+                timings.error = None if response.status_code == 200 else f"HTTP {response.status_code}"
             if response.status_code != 200:
                 # Try to read an error body.
                 body = response.read().decode(errors="replace")
@@ -222,6 +244,8 @@ def stream_chat(
                 if data.strip() == "[DONE]":
                     return
                 for event in _stream_events(data):
+                    if timings is not None:
+                        timings.observe(*event)
                     yield event
                     if event[0] == "error":
                         return
@@ -242,18 +266,24 @@ async def stream_chat_async(
     genmax: int,
     debug: bool = False,
     opencode_session: str | None = None,
-) -> AsyncGenerator[tuple[Literal["delta", "error", "usage"], str], None]:
+    timings: RequestTimings | None = None,
+) -> AsyncGenerator[StreamEvent, None]:
     """Stream web completions with cancellable reads and task-owned connections."""
     payload = _stream_payload(model, messages, samplers, genmax, debug)
     headers = _auth_headers(api_key, opencode_session)
     if debug:
         _print_debug_headers(headers)
 
+    if timings is not None:
+        timings.mark_dispatched()
     try:
         async with httpx.AsyncClient(timeout=STREAM_TIMEOUT, http2=False) as client:
             async with client.stream(
                 "POST", f"{base_url}/v1/chat/completions", json=payload, headers=headers
             ) as response:
+                if timings is not None:
+                    timings.mark_headers(response.headers)
+                    timings.error = None if response.status_code == 200 else f"HTTP {response.status_code}"
                 if response.status_code != 200:
                     body = (await response.aread()).decode(errors="replace")
                     yield "error", f"HTTP {response.status_code}: {body}"
@@ -265,6 +295,8 @@ async def stream_chat_async(
                     if data.strip() == "[DONE]":
                         return
                     for event in _stream_events(data):
+                        if timings is not None:
+                            timings.observe(*event)
                         yield event
                         if event[0] == "error":
                             return

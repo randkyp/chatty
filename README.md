@@ -91,6 +91,7 @@ to config or session files.
 | `/system [text]` | Show/set/clear the system prompt |
 | `/ctx [n]` | Show context window details or set size |
 | `/genmax [n]` | Show/set max generation tokens |
+| `/timing` | Last request's timing breakdown (app, network, prompt, TTFT, thinking, output) plus usage footer |
 | `/profile [name]` | Show active profile or switch connection profile |
 | `/apikey [status\|clear]` | Enter, inspect, or clear an ephemeral profile key |
 | `/samplers ...` | Show/set/remove samplers, or `save` to config |

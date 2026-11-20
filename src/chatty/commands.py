@@ -25,6 +25,7 @@ from rich.console import Console
 from chatty.chat_session import ChatSession, TokenCounter
 from chatty.config import EPHEMERAL_KEY_REQUIRED, AppConfig, ProfileNotFoundError, resolve_limits, save_profile
 from chatty.images import encode_image, encode_image_file, get_clipboard_image
+from chatty.timing import format_timing_report
 
 console = Console()
 
@@ -184,6 +185,7 @@ COMMANDS: list[str] = [
     "/system",
     "/ctx",
     "/genmax",
+    "/timing",
     "/profile",
     "/apikey",
     "/samplers",
@@ -250,6 +252,9 @@ def handle_command(
 
         case "/genmax":
             return _cmd_genmax(arg, session, cfg)
+
+        case "/timing":
+            return _cmd_timing(session)
 
         case "/profile":
             return _cmd_profile(arg, session, cfg)
@@ -371,6 +376,13 @@ def _cmd_genmax(arg: str, session: ChatSession, cfg: AppConfig) -> CommandResult
         return CommandResult(message=f"Max generation tokens set to {val}.")
     except ValueError:
         return CommandResult(message="Usage: /genmax <integer>")
+
+
+def _cmd_timing(session: ChatSession) -> CommandResult:
+    record = session.last_timing
+    if record is None:
+        return CommandResult(message="No request recorded yet.")
+    return CommandResult(message="\n".join(format_timing_report(record)))
 
 
 def _cmd_profile(arg: str, session: ChatSession, cfg: AppConfig) -> CommandResult:
@@ -997,6 +1009,7 @@ def _cmd_help() -> CommandResult:
         ("/system [prompt]", "Show, set, or clear the system prompt."),
         ("/ctx [size]", "Show context window details or set context size."),
         ("/genmax [tokens]", "Show or set max generation tokens."),
+        ("/timing", "Show the last request's timing breakdown and usage footer."),
         ("/profile [name]", "Show active profile or switch connection profile."),
         ("/apikey [status|clear]", "Enter, inspect, or clear a process-memory API key."),
         ("/samplers [opts]", "Show, set, remove samplers, or save settings (/samplers save)."),

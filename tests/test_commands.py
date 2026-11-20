@@ -489,3 +489,37 @@ def test_save_session_roundtrip_has_timestamp(tmp_path):
     assert data["ctx_size"] == 999
     assert "saved_at" in data
     assert data["messages"][0]["content"] == "hi"
+
+
+def test_cmd_timing_without_a_request(session, app_config):
+    res = handle_command("/timing", session, app_config)
+    assert res.message == "No request recorded yet."
+
+
+def test_cmd_timing_reports_the_last_request(session, app_config):
+    from chatty.timing import RequestTimings
+
+    record = RequestTimings()
+    record.dispatched_at = record.submitted_at + 0.002
+    record.headers_at = record.submitted_at + 1.0
+    record.first_content_at = record.submitted_at + 1.5
+    record.last_content_at = record.submitted_at + 3.0
+    record.finished_at = record.submitted_at + 3.2
+    record.usage = {"prompt_tokens": 10, "completion_tokens": 20, "total_tokens": 30}
+    session.last_timing = record
+
+    res = handle_command("/timing", session, app_config)
+    lines = res.message.split("\n")
+    assert lines[0].startswith(record.clock)
+    assert "app 2ms" in lines[0]
+    assert "ttft 1.50s" in lines[0]
+    assert "total 3.20s" in lines[0]
+    assert lines[1].startswith("out 20")
+
+
+def test_timing_survives_clear(session, app_config):
+    from chatty.timing import RequestTimings
+
+    session.last_timing = RequestTimings()
+    handle_command("/clear", session, app_config)
+    assert session.last_timing is not None

@@ -552,3 +552,54 @@ def test_web_assets_implement_accessible_transient_model_picker(client):
     assert "if (modelPicker) return;" in script
     assert "closeModelPickerLocal(true);" in script
     assert "max-height: calc(8 * 1.5em + 0.5em)" in styles
+
+
+def test_websocket_streams_reasoning_transiently(client, respx_mock):
+    _mock_upstream(
+        respx_mock,
+        'data: {"choices": [{"delta": {"reasoning_content": "weighing options"}}]}\n\n'
+        'data: {"choices": [{"delta": {"content": "answer"}}]}\n\n'
+        "data: [DONE]\n",
+    )
+    with client.websocket_connect("/ws") as ws:
+        assert ws.receive_json()["type"] == "welcome"
+        ws.send_json({"type": "message", "text": "hi"})
+
+        reasoning, history = [], None
+        for _ in range(30):
+            msg = ws.receive_json()
+            if msg["type"] == "stream_reasoning":
+                reasoning.append(msg["content"])
+            if msg["type"] == "submission_done":
+                history = msg["content"]
+                break
+
+    assert "".join(reasoning) == "weighing options"
+    assert history[-1] == {"role": "assistant", "content": "answer"}
+
+
+def test_timing_command_reports_the_last_web_request(client, respx_mock):
+    _mock_upstream(
+        respx_mock,
+        'data: {"choices": [{"delta": {"content": "answer"}}]}\n\n'
+        'data: {"choices": [], "usage": {"prompt_tokens": 3, "completion_tokens": 2, "total_tokens": 5}}\n\n'
+        "data: [DONE]\n",
+    )
+    with client.websocket_connect("/ws") as ws:
+        assert ws.receive_json()["type"] == "welcome"
+        ws.send_json({"type": "message", "text": "hi"})
+        while ws.receive_json()["type"] != "submission_done":
+            pass
+
+        ws.send_json({"type": "message", "text": "/timing"})
+        system = []
+        for _ in range(10):
+            msg = ws.receive_json()
+            if msg["type"] == "system":
+                system.append(msg["content"])
+            if msg["type"] == "submission_done":
+                break
+
+    assert system and "ttft" in system[0]
+    assert "→ total" in system[0]
+    assert "out 2" in system[0]

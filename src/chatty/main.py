@@ -11,7 +11,6 @@ import itertools
 import json
 import shutil
 import sys
-import time
 from collections.abc import Iterator
 from pathlib import Path
 
@@ -38,6 +37,7 @@ from chatty.config import (
     parse_args,
     resolve_limits,
 )
+from chatty.timing import RequestTimings, format_elapsed, format_one_liner
 from chatty.ui import (
     ChattyCompleter,
     console,
@@ -63,13 +63,14 @@ def stream_and_render(
     *,
     label: str = "Assistant",
     conversation_id: str | None = None,
+    timings: RequestTimings | None = None,
 ) -> tuple[str, bool, dict | None]:
     """Stream a completion and render it to the terminal.
 
-    Handles the Thinking spinner, the rolling tail preview (or raw output),
-    Ctrl+C interruption, and final Markdown rendering. Returns
-    (full_response, interrupted, usage) where *usage* is the server-reported
-    token usage dict if available.
+    Handles the Thinking spinner, the transient thinking line, the rolling tail
+    preview (or raw output), Ctrl+C interruption, and final Markdown rendering.
+    Returns (full_response, interrupted, usage) where *usage* is the
+    server-reported token usage dict if available.
     """
     if cfg.ephemeral_api_key_missing:
         print_error(EPHEMERAL_KEY_REQUIRED)
@@ -84,11 +85,13 @@ def stream_and_render(
         genmax=genmax,
         debug=cfg.debug,
         opencode_session=cfg.request_session_id(conversation_id),
+        timings=timings,
     )
 
     collected: list[str] = []
     usage: dict | None = None
     interrupted = False
+    first_event: tuple[str, str] | None = None
 
     console.print()
     stream_iter: Iterator = iter(stream)
@@ -101,19 +104,49 @@ def stream_and_render(
             transient=True,
             refresh_per_second=4,
         ):
-            first_chunk = next(stream_iter)
-        stream_iter = itertools.chain([first_chunk], stream_iter)
+            first_event = next(stream_iter)
     except StopIteration:
-        stream_iter = iter([])
+        first_event = None
     except KeyboardInterrupt:
         interrupted = True
+        first_event = None
 
+    # Hand the spinner over to a transient thinking line while the model reasons.
+    # The line is a flattened tail, so long reasoning never grows the scrollback.
+    # Reasoning that interleaves with content is ignored: the answer preview owns
+    # the terminal from the first content token onwards.
+    pending: list[tuple[str, str]] = []
+    if first_event is not None and not cfg.raw_output and not interrupted:
+        if first_event[0] == "reasoning":
+            try:
+                with Live(_thinking_line(""), console=console, refresh_per_second=8, transient=True) as live:
+                    event: tuple[str, str] | None = first_event
+                    text = ""
+                    while event is not None and event[0] == "reasoning":
+                        text += event[1]
+                        live.update(_thinking_line(text))
+                        try:
+                            event = next(stream_iter)
+                        except StopIteration:
+                            event = None
+                    if event is not None:
+                        pending.append(event)
+            except KeyboardInterrupt:
+                interrupted = True
+        else:
+            pending.append(first_event)
+    elif first_event is not None:
+        pending.append(first_event)
+
+    stream_iter = itertools.chain(pending, stream_iter)
     console.print(f"[assistant]{label} ›[/]", end="" if cfg.raw_output else "\n")
 
     def consume(handle_chunk) -> None:
         nonlocal usage, interrupted
         for event_type, content in stream_iter:
             if event_type == "error":
+                if timings is not None:
+                    timings.error = content
                 print_error(content)
                 break
             if event_type == "usage":
@@ -121,6 +154,9 @@ def stream_and_render(
                     usage = json.loads(content)
                 except json.JSONDecodeError:
                     usage = None
+                continue
+            if event_type in ("reasoning", "timings"):
+                # Timed by the API layer; reasoning is shown transiently only.
                 continue
             collected.append(content)
             handle_chunk("".join(collected) if not cfg.raw_output else content)
@@ -157,32 +193,28 @@ def stream_and_render(
     return "".join(collected), interrupted, usage
 
 
-def _format_elapsed(elapsed: float) -> str:
-    """Format an elapsed request duration for the terminal status line."""
-    seconds = max(0, round(elapsed))
-    if seconds < 60:
-        return f"{seconds}s"
-
-    minutes, seconds = divmod(seconds, 60)
-    if minutes < 60:
-        return f"{minutes}m" if seconds == 0 else f"{minutes}m {seconds}s"
-
-    hours, minutes = divmod(minutes, 60)
-    return f"{hours}h {minutes}m" if minutes else f"{hours}h"
+def _thinking_line(text: str) -> Text:
+    """Return the transient single-line reasoning preview (newest text wins)."""
+    width = shutil.get_terminal_size((80, 24)).columns
+    flat = " ".join(text.split())
+    prefix = "thinking › "
+    keep = max(width - len(prefix) - 2, 8)
+    tail = flat[-keep:]
+    lead = "…" if len(flat) > keep else ""
+    return Text(f"{prefix}{lead}{tail}", style="dim italic", no_wrap=True, overflow="ellipsis")
 
 
-def _report_tokens(session: ChatSession, usage: dict | None, elapsed: float) -> None:
-    """Display token usage, preferring the server's real counts over an estimate."""
-    if usage and usage.get("completion_tokens") is not None:
-        prompt = usage.get("prompt_tokens", 0)
-        completion = usage.get("completion_tokens", 0)
-        total = usage.get("total_tokens", prompt + completion)
-        rate = f", {completion / elapsed:.1f} tok/s" if elapsed > 0 and completion else ""
-        print_system(f"[tokens: {total} ({prompt} ctx + {completion} gen){rate}, {_format_elapsed(elapsed)}]")
+def _report_tokens(session: ChatSession, timings: RequestTimings) -> None:
+    """Display the compact status line, preferring the server's real counts."""
+    if timings.usage and timings.usage.get("completion_tokens") is not None:
+        print_system(format_one_liner(timings))
         return
     token_count = session.get_token_count()
     if token_count >= 0:
-        print_system(f"[tokens: ~{token_count} / {session.context_budget} budget, {_format_elapsed(elapsed)}]")
+        print_system(
+            f"[{timings.clock} tokens: ~{token_count} / {session.context_budget} budget, "
+            f"{format_elapsed(timings.total)}]"
+        )
 
 
 # ── Slash-command result handling ──────────────────────────────────────────
@@ -207,10 +239,19 @@ def _handle_command_result(result: CommandResult, session: ChatSession, cfg: App
         return False
 
     if result.ephemeral_prompt:
+        record = RequestTimings()
         messages = [{"role": "user", "content": result.ephemeral_prompt}]
-        stream_and_render(
-            cfg, messages, session.genmax, label="Assistant (ephemeral)", conversation_id=session.conversation_id
+        _response, interrupted, usage = stream_and_render(
+            cfg,
+            messages,
+            session.genmax,
+            label="Assistant (ephemeral)",
+            conversation_id=session.conversation_id,
+            timings=record,
         )
+        record.finish(usage=usage, interrupted=interrupted)
+        session.last_timing = record
+        _report_tokens(session, record)
         return False
 
     if result.resend_user:
@@ -289,13 +330,15 @@ def _budget_warning(session: ChatSession) -> None:
     )
 
 
-def _stream_record_report(session: ChatSession, cfg: AppConfig, payload_messages: list[dict]) -> None:
+def _stream_record_report(
+    session: ChatSession, cfg: AppConfig, payload_messages: list[dict], timings: RequestTimings | None = None
+) -> None:
     """Stream a response for *payload_messages*, record it, and report tokens."""
-    start = time.monotonic()
-    full_response, _interrupted, usage = stream_and_render(
-        cfg, payload_messages, session.genmax, conversation_id=session.conversation_id
+    record = timings if timings is not None else RequestTimings()
+    full_response, interrupted, usage = stream_and_render(
+        cfg, payload_messages, session.genmax, conversation_id=session.conversation_id, timings=record
     )
-    elapsed = time.monotonic() - start
+    record.finish(usage=usage, interrupted=interrupted)
 
     if full_response:
         session.add_assistant_message(full_response)
@@ -304,16 +347,18 @@ def _stream_record_report(session: ChatSession, cfg: AppConfig, payload_messages
         # message so it isn't duplicated on retry. revert is merge-aware.
         session.revert_last_user_message()
 
-    _report_tokens(session, usage, elapsed)
+    session.last_timing = record
+    _report_tokens(session, record)
 
 
 def _send_and_render(session: ChatSession, cfg: AppConfig) -> None:
     """Build the clipped payload from existing history, stream, and record (/retry)."""
+    record = RequestTimings()
     payload_messages = session.build_payload_messages()
     if payload_messages is None:
         _budget_warning(session)
         return
-    _stream_record_report(session, cfg, payload_messages)
+    _stream_record_report(session, cfg, payload_messages, record)
 
 
 # ── Main loop ──────────────────────────────────────────────────────────────
@@ -396,6 +441,7 @@ def main(argv: list[str] | None = None) -> None:
                 text = text[1:]
 
             # ── Send message to API ─────────────────────────────────────────
+            record = RequestTimings()
             try:
                 payload_messages, attached = session.stage_user_message(text)
             except Exception as e:  # noqa: BLE001 - keep preparation failures in the REPL
@@ -412,7 +458,7 @@ def main(argv: list[str] | None = None) -> None:
                 session.revert_last_user_message()
                 continue
 
-            _stream_record_report(session, cfg, payload_messages)
+            _stream_record_report(session, cfg, payload_messages, record)
     finally:
         if cfg.autosave and session.messages:
             try:
