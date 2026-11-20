@@ -26,13 +26,15 @@ uv tool install '.[web]'     # CLI + web UI
 chatty -p myprofile               # use a named profile
 chatty -m gpt-4o -s "Be concise"  # override model & system prompt
 chatty -c /path/to/config.toml    # use a specific config file
+chatty --autosave                 # save the session on exit (single rolling session.json)
 chatty --web                      # launch web UI (default: http://127.0.0.1:8000)
 ```
 
 ## Configuration & Sessions
 
 **Config:** Resolved from `~/.config/chatty/config.toml`, then `./config.toml`. Overridable with `-c/--config`.
-**Sessions:** `/save [file]` and `/load [file]` default to `~/.config/chatty/session.json(l)`. Pass `--autosave` to save on exit.
+**Sessions:** `/save [file]` and `/load [file]` default to `~/.config/chatty/session.json(l)`.
+**Autosave:** Pass `--autosave` to write the active session to `~/.config/chatty/session.json` on exit. In the web UI it also saves when a browser disconnects and when the server shuts down. Every autosave overwrites the previous one, so it is a single rolling file — and it shares its path with a bare `/save`, so it replaces that save too.
 
 Profiles use stored keys by default. To keep a provider key only in process memory, opt in explicitly:
 
